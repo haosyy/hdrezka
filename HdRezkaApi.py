@@ -4,6 +4,7 @@ import base64
 from itertools import product
 import re
 import json
+import time
 
 class HdRezkaStream():
 	def __init__(self, season, episode):
@@ -28,7 +29,24 @@ class HdRezkaApi():
 		if index != -1: 
 			fragment = url[index + 1:]
 			self.frag = re.findall(r'\d+', fragment)
-		self.HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36'}
+		
+		# Створюємо сесію для кращої обробки cookies
+		self.session = requests.Session()
+		
+		self.HEADERS = {
+			'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+			'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+			'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8,uk;q=0.7',
+			'Accept-Encoding': 'gzip, deflate, br',
+			'Connection': 'keep-alive',
+			'Upgrade-Insecure-Requests': '1',
+			'Sec-Fetch-Dest': 'document',
+			'Sec-Fetch-Mode': 'navigate',
+			'Sec-Fetch-Site': 'none',
+			'Cache-Control': 'max-age=0'
+		}
+		
+		self.session.headers.update(self.HEADERS)
 		self.url = url.split(".html")[0] + ".html"
 		self.page = self.getPage()
 		self.page.raise_for_status() # Перевірка на HTTP помилки (4xx, 5xx)
@@ -66,7 +84,38 @@ class HdRezkaApi():
 		return self._type
 
 	def getPage(self):
-		return requests.get(self.url, headers=self.HEADERS)
+		# Додаємо затримку та повторні спроби
+		max_retries = 3
+		
+		for attempt in range(max_retries):
+			try:
+				response = self.session.get(self.url, timeout=15)
+				
+				# Якщо отримали 403, пробуємо інший User-Agent
+				if response.status_code == 403:
+					print(f"Спроба {attempt + 1}: отримано 403, змінюємо User-Agent")
+					# Пробуємо різні User-Agent
+					user_agents = [
+						'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+						'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+						'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0'
+					]
+					self.session.headers.update({'User-Agent': user_agents[attempt % len(user_agents)]})
+					time.sleep(2)  # Затримка перед повторною спробою
+					continue
+				
+				return response
+				
+			except requests.exceptions.RequestException as e:
+				print(f"Спроба {attempt + 1}: помилка запиту - {e}")
+				if attempt < max_retries - 1:
+					time.sleep(3)  # Затримка перед повторною спробою
+					continue
+				else:
+					raise e
+		
+		# Якщо всі спроби невдалі, повертаємо останню відповідь
+		return self.session.get(self.url, timeout=15)
 
 	def getSoup(self):
 		return BeautifulSoup(self.page.content, 'html.parser')
@@ -187,7 +236,14 @@ class HdRezkaApi():
 				"action": "get_episodes"
 			}
 			try:
-				r = requests.post("https://rezka.ag/ajax/get_cdn_series/", data=js, headers=self.HEADERS)
+				# Додаємо додаткові заголовки для AJAX запитів
+				ajax_headers = self.HEADERS.copy()
+				ajax_headers.update({
+					'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+					'X-Requested-With': 'XMLHttpRequest',
+					'Referer': self.url
+				})
+				r = self.session.post("https://rezka.ag/ajax/get_cdn_series/", data=js, headers=ajax_headers, timeout=15)
 				response = r.json()
 				if response['success']:
 					seasons, episodes = self.getEpisodes(response['seasons'], response['episodes'])
@@ -206,7 +262,14 @@ class HdRezkaApi():
 
 		def makeRequest(data):
 			try:
-				r = requests.post("https://rezka.ag/ajax/get_cdn_series/", data=data, headers=self.HEADERS)
+				# Додаємо додаткові заголовки для AJAX запитів
+				ajax_headers = self.HEADERS.copy()
+				ajax_headers.update({
+					'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+					'X-Requested-With': 'XMLHttpRequest',
+					'Referer': self.url
+				})
+				r = self.session.post("https://rezka.ag/ajax/get_cdn_series/", data=data, headers=ajax_headers, timeout=15)
 				r = r.json()
 
 				if r['success']:

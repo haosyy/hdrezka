@@ -551,7 +551,17 @@ def parse_content():
     except Exception as e:
         print(f"Помилка при парсингу: {str(e)}")
         print(traceback.format_exc())
-        return jsonify({'error': str(e)}), 500
+        
+        # Додаткова інформація про помилку для користувача
+        error_message = str(e)
+        if "403" in error_message:
+            error_message = "Сайт тимчасово заблокував доступ. Спробуйте пізніше або використайте інший URL."
+        elif "404" in error_message:
+            error_message = "URL не знайдено. Перевірте правильність посилання."
+        elif "timeout" in error_message.lower():
+            error_message = "Час очікування вичерпано. Спробуйте ще раз."
+        
+        return jsonify({'error': error_message}), 500
 
 @app.route('/api/stream', methods=['POST'])
 def get_stream():
