@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: hdrezka-discord-app
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --worker-tmp-dir /dev/shm --bind 0.0.0.0:$PORT --timeout 120 --workers 2 app:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.7
+      - key: FLASK_ENV
+        value: production
+    healthCheckPath: /

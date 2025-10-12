@@ -2,8 +2,15 @@ from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
 import json
 import traceback
+import os
+import sys
 from time import time
 from HdRezkaApi import HdRezkaApi
+
+# Логування для діагностики
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app, origins=[
@@ -599,4 +606,24 @@ def get_stream():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    import os
+    
+    # Діагностика середовища
+    logger.info(f"Python версія: {sys.version}")
+    logger.info(f"Поточний робочий каталог: {os.getcwd()}")
+    logger.info(f"Доступні змінні середовища: {list(os.environ.keys())}")
+    
+    port = int(os.environ.get('PORT', 5001))
+    logger.info(f"Запуск на порту: {port}")
+    
+    # Перевірка залежностей
+    try:
+        import flask
+        import requests
+        import bs4
+        logger.info("Всі залежності успішно імпортовані")
+    except ImportError as e:
+        logger.error(f"Помилка імпорту: {e}")
+        sys.exit(1)
+    
+    app.run(debug=False, host='0.0.0.0', port=port)
