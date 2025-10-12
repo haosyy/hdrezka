@@ -123,6 +123,7 @@ HTML_TEMPLATE = """
         </div>
 
         <button onclick="parseContent()">📥 Парсити контент</button>
+        <button onclick="testAPI()" style="background: #2196F3; margin-left: 10px;">🧪 Тест API</button>
         <div id="parseResult" class="result" style="display: none;"></div>
     </div>
 
@@ -238,6 +239,14 @@ HTML_TEMPLATE = """
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ url })
                 });
+
+                // Перевіряємо, чи відповідь є JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Не JSON відповідь:', text);
+                    throw new Error(`Сервер повернув не JSON дані. Статус: ${response.status}`);
+                }
 
                 const data = await response.json();
                 
@@ -367,6 +376,14 @@ HTML_TEMPLATE = """
                     body: JSON.stringify(requestData)
                 });
 
+                // Перевіряємо, чи відповідь є JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Не JSON відповідь для stream:', text);
+                    throw new Error(`Сервер повернув не JSON дані. Статус: ${response.status}`);
+                }
+
                 const data = await response.json();
                 
                 if (!response.ok) {
@@ -479,6 +496,41 @@ HTML_TEMPLATE = """
                 }
             }
         }
+        
+        // Функція для тестування API
+        async function testAPI() {
+            const parseResultDiv = document.getElementById('parseResult');
+            showLoading(parseResultDiv, 'Тестування API...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/test`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ test: 'data' })
+                });
+                
+                console.log('Тест API - статус:', response.status);
+                console.log('Тест API - заголовки:', response.headers);
+                
+                // Перевіряємо, чи відповідь є JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('API повернув не JSON:', text);
+                    showResult(parseResultDiv, `API повернув не JSON дані:\n${text}`, true);
+                    return;
+                }
+                
+                const data = await response.json();
+                showResult(parseResultDiv, data);
+                
+                console.log('API тест успішний:', data);
+                
+            } catch (error) {
+                console.error('Помилка тесту API:', error);
+                showResult(parseResultDiv, `Помилка тесту API: ${error.message}`, true);
+            }
+        }
     </script>
 </body>
 </html>
@@ -515,10 +567,29 @@ def manifest():
         }
     })
 
+@app.route('/api/test', methods=['GET', 'POST'])
+def test_api():
+    """Тестовий endpoint для перевірки роботи API"""
+    return jsonify({
+        'status': 'success',
+        'message': 'API працює',
+        'timestamp': time(),
+        'method': request.method,
+        'headers': dict(request.headers),
+        'data': request.get_json() if request.is_json else None
+    })
+
 @app.route('/api/parse', methods=['POST'])
 def parse_content():
     try:
-        data = request.json
+        # Перевіряємо, чи запит містить JSON
+        if not request.is_json:
+            return jsonify({'error': 'Запит повинен містити JSON дані'}), 400
+            
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Порожній JSON запит'}), 400
+            
         url = data.get('url')
         
         if not url:
@@ -573,7 +644,14 @@ def parse_content():
 @app.route('/api/stream', methods=['POST'])
 def get_stream():
     try:
-        data = request.json
+        # Перевіряємо, чи запит містить JSON
+        if not request.is_json:
+            return jsonify({'error': 'Запит повинен містити JSON дані'}), 400
+            
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Порожній JSON запит'}), 400
+            
         url = data.get('url')
         translation = data.get('translation')
         season = data.get('season')
