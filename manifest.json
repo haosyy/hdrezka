@@ -1,0 +1,24 @@
+{
+  "name": "HdRezka API",
+  "description": "Перегляд фільмів та серіалів з HdRezka через Discord Activities",
+  "version": "1.0.0",
+  "author": "Your Name",
+  "repository": "https://github.com/yourusername/hdrezka-python-app",
+  "entrypoint": "/",
+  "supported_platforms": ["desktop"],
+  "tags": ["entertainment", "video", "streaming"],
+  "permissions": {
+    "identify": {
+      "description": "Отримати базову інформацію про користувача"
+    }
+  },
+  "ui": {
+    "width": 1200,
+    "height": 800,
+    "resizable": true
+  },
+  "assets": {
+    "large_image": "https://your-domain.com/logo-large.png",
+    "small_image": "https://your-domain.com/logo-small.png"
+  }
+}
