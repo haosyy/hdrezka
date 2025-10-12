@@ -2,7 +2,7 @@
 # Скопіюйте цей файл в config.py та заповніть ваші дані
 
 # Discord Application Client ID
-DISCORD_CLIENT_ID = "your_discord_client_id_here"
+DISCORD_CLIENT_ID = "1427061847483351245"
 
 # URL вашого сайту (для Discord OAuth)
 SITE_URL = "https://your-domain.com"
