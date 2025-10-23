@@ -1034,25 +1034,25 @@ def get_stream():
         season = data.get('season')
         episode = data.get('episode')
         
+        print(f"Отримані дані: url={url}, translation={translation}, season={season}, episode={episode}")
+        
         if not url or not translation:
             return jsonify({'error': 'URL та переклад є обов\'язковими'}), 400
         
-        # Створюємо екземпляр API
-        rezka = HdRezkaApi(url)
-        
-        # Отримуємо стрім
-        stream = rezka.getStream(season, episode, translation)
-        
-        # Перевіряємо, чи отримали ми дані
-        if not stream or not hasattr(stream, 'videos'):
-            return jsonify({'error': 'Не вдалося отримати стрім'}), 404
-        
+        # Тимчасово повертаємо тестові дані замість HdRezka
+        print("Повертаємо тестові дані замість HdRezka")
         result = {
-            'videos': stream.videos,
-            'season': stream.season,
-            'episode': stream.episode
+            'videos': {
+                '720': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+                '1080': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4'
+            },
+            'season': season,
+            'episode': episode,
+            'test_mode': True,
+            'message': 'Тестовий режим - HdRezka тимчасово відключено'
         }
         
+        print(f"Повертаємо результат: {result}")
         return jsonify(result)
         
     except Exception as e:
