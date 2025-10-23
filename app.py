@@ -25,6 +25,10 @@ CORS(app, origins=[
 CACHE = {}
 CACHE_TIMEOUT_SECONDS = 3600 # 1 година
 
+# Watch Together система
+WATCH_ROOMS = {}  # Кімнати для синхронізації
+ROOM_TIMEOUT = 3600  # 1 година без активності
+
 # HTML шаблон (вбудований в код)
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -256,6 +260,17 @@ HTML_TEMPLATE = """
         <button data-action="test-hdrezka" style="background: #9C27B0; margin-left: 10px;">🔍 Тест HdRezka</button>
         <button data-action="test-direct" style="background: #4CAF50; margin-left: 10px;">🚀 Прямі відео</button>
         <button data-action="test-blob" style="background: #FF9800; margin-left: 10px;">💾 Тест Blob</button>
+        
+        <!-- Watch Together кнопки -->
+        <div style="margin-top: 20px; padding: 15px; background: #2C2F33; border-radius: 8px; border: 2px solid #5865F2;">
+            <h3 style="color: #5865F2; margin-top: 0;">👥 Watch Together</h3>
+            <p style="color: #B9BBBE; font-size: 14px; margin-bottom: 15px;">
+                Синхронізуйте перегляд з друзями! Відкрийте відео на своєму пристрої, а Discord буде синхронізувати паузи та час.
+            </p>
+            <button data-action="create-room" style="background: #5865F2; margin-right: 10px;">🏠 Створити кімнату</button>
+            <button data-action="join-room" style="background: #57F287; margin-right: 10px;">🚪 Приєднатися</button>
+            <button data-action="list-rooms" style="background: #FEE75C; color: #000;">📋 Список кімнат</button>
+        </div>
         <div id="streamResult" class="result" style="display: none;"></div>
         
         <div id="videoContainer" style="display: none; margin-top: 20px;">
@@ -388,6 +403,15 @@ HTML_TEMPLATE = """
                                     break;
                                 case 'test-blob':
                                     testBlob();
+                                    break;
+                                case 'create-room':
+                                    createWatchRoom();
+                                    break;
+                                case 'join-room':
+                                    joinWatchRoom();
+                                    break;
+                                case 'list-rooms':
+                                    listWatchRooms();
                                     break;
                                 default:
                                     console.log('Невідома дія:', dataAction);
@@ -802,19 +826,38 @@ HTML_TEMPLATE = """
         async function updateDiscordActivity(details, state) {
             if (discordSDK) {
                 try {
-                    await discordSDK.commands.setActivity({
-                        activity: {
-                            details: details,
-                            state: state,
-                            assets: {
-                                large_image: 'hdrezka_logo',
-                                large_text: 'HdRezka API'
-                            },
-                            timestamps: {
-                                start: Math.floor(Date.now() / 1000)
-                            }
+                    let activity = {
+                        details: details,
+                        state: state,
+                        assets: {
+                            large_image: 'hdrezka_logo',
+                            large_text: 'HdRezka - Спільний перегляд'
+                        },
+                        timestamps: {
+                            start: Math.floor(Date.now() / 1000)
                         }
+                    };
+                    
+                    // Додаємо інформацію про Watch Together
+                    if (currentRoomId) {
+                        if (isHost) {
+                            activity.details = `👑 Хост кімнати: ${details}`;
+                            activity.state = `Кімната: ${currentRoomId} | ${state}`;
+                            activity.assets.small_image = 'crown';
+                            activity.assets.small_text = 'Хост кімнати';
+                        } else {
+                            activity.details = `👥 Гість кімнати: ${details}`;
+                            activity.state = `Кімната: ${currentRoomId} | Синхронізація з хостом`;
+                            activity.assets.small_image = 'users';
+                            activity.assets.small_text = 'Гість кімнати';
+                        }
+                    }
+                    
+                    await discordSDK.commands.setActivity({
+                        activity: activity
                     });
+                    
+                    console.log('✅ Discord Activity оновлено');
                 } catch (error) {
                     console.log('Помилка оновлення Discord активності:', error);
                 }
@@ -1154,11 +1197,222 @@ HTML_TEMPLATE = """
             }
         }
         
+        // ===== WATCH TOGETHER СИСТЕМА =====
+        
+        let currentRoomId = null;
+        let isHost = false;
+        let syncInterval = null;
+        
+        // Створення кімнати
+        async function createWatchRoom() {
+            const streamResultDiv = document.getElementById('streamResult');
+            showLoading(streamResultDiv, 'Створення кімнати...');
+            
+            try {
+                if (!currentStreamData || !currentStreamData.videos) {
+                    showResult(streamResultDiv, 'Спочатку отримайте стрім!', true);
+                    return;
+                }
+                
+                const videoUrl = Object.values(currentStreamData.videos)[0];
+                const videoTitle = document.getElementById('url').value || 'Невідоме відео';
+                
+                const response = await fetch(`${API_BASE}/watch/create-room`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        host_id: 'user_' + Math.random().toString(36).substr(2, 9),
+                        video_url: videoUrl,
+                        video_title: videoTitle
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    currentRoomId = data.room_id;
+                    isHost = true;
+                    
+                    showResult(streamResultDiv, {
+                        message: '✅ Кімната створена!',
+                        room_id: data.room_id,
+                        video_title: data.video_title,
+                        instructions: [
+                            '1. Поділіться кодом кімнати з друзями',
+                            '2. Відкрийте відео на своєму пристрої',
+                            '3. Discord буде синхронізувати перегляд',
+                            '4. Ви - хост, ви контролюєте відтворення'
+                        ]
+                    });
+                    
+                    // Запускаємо синхронізацію
+                    startSync();
+                    
+                    console.log('🏠 Кімната створена:', data.room_id);
+                } else {
+                    showResult(streamResultDiv, `Помилка: ${data.error}`, true);
+                }
+                
+            } catch (error) {
+                console.error('Помилка створення кімнати:', error);
+                showResult(streamResultDiv, `Помилка: ${error.message}`, true);
+            }
+        }
+        
+        // Приєднання до кімнати
+        async function joinWatchRoom() {
+            const roomId = prompt('Введіть код кімнати:');
+            if (!roomId) return;
+            
+            const streamResultDiv = document.getElementById('streamResult');
+            showLoading(streamResultDiv, 'Приєднання до кімнати...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/watch/join-room/${roomId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: 'user_' + Math.random().toString(36).substr(2, 9)
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    currentRoomId = roomId;
+                    isHost = false;
+                    
+                    showResult(streamResultDiv, {
+                        message: '✅ Приєднано до кімнати!',
+                        room_id: data.room_id,
+                        video_title: data.video_title,
+                        video_url: data.video_url,
+                        viewers_count: data.viewers_count,
+                        instructions: [
+                            '1. Відкрийте відео за посиланням вище',
+                            '2. Discord буде синхронізувати з хостом',
+                            '3. Ви - гість, слідкуйте за хостом'
+                        ]
+                    });
+                    
+                    // Запускаємо синхронізацію
+                    startSync();
+                    
+                    console.log('🚪 Приєднано до кімнати:', roomId);
+                } else {
+                    showResult(streamResultDiv, `Помилка: ${data.error}`, true);
+                }
+                
+            } catch (error) {
+                console.error('Помилка приєднання:', error);
+                showResult(streamResultDiv, `Помилка: ${error.message}`, true);
+            }
+        }
+        
+        // Список кімнат
+        async function listWatchRooms() {
+            const streamResultDiv = document.getElementById('streamResult');
+            showLoading(streamResultDiv, 'Завантаження кімнат...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/watch/rooms`);
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    showResult(streamResultDiv, {
+                        message: `Знайдено ${data.total} активних кімнат`,
+                        rooms: data.rooms,
+                        instructions: [
+                            'Натисніть "🚪 Приєднатися" та введіть код кімнати',
+                            'Або створіть нову кімнату кнопкою "🏠 Створити кімнату"'
+                        ]
+                    });
+                } else {
+                    showResult(streamResultDiv, `Помилка: ${data.error}`, true);
+                }
+                
+            } catch (error) {
+                console.error('Помилка списку кімнат:', error);
+                showResult(streamResultDiv, `Помилка: ${error.message}`, true);
+            }
+        }
+        
+        // Запуск синхронізації
+        function startSync() {
+            if (syncInterval) {
+                clearInterval(syncInterval);
+            }
+            
+            syncInterval = setInterval(async () => {
+                if (!currentRoomId) return;
+                
+                try {
+                    if (isHost) {
+                        // Хост відправляє стан
+                        if (videoPlayer && !videoPlayer.paused) {
+                            await syncRoomState(videoPlayer.paused, videoPlayer.currentTime);
+                        }
+                    } else {
+                        // Гість отримує стан
+                        const response = await fetch(`${API_BASE}/watch/room/${currentRoomId}`);
+                        const data = await response.json();
+                        
+                        if (data.status === 'success' && videoPlayer) {
+                            // Синхронізуємо з хостом
+                            const timeDiff = Math.abs(videoPlayer.currentTime - data.current_time);
+                            
+                            if (timeDiff > 2) { // Якщо різниця більше 2 секунд
+                                videoPlayer.currentTime = data.current_time;
+                                console.log(`🔄 Синхронізація: ${data.current_time.toFixed(1)}s`);
+                            }
+                            
+                            if (videoPlayer.paused !== !data.is_playing) {
+                                if (data.is_playing) {
+                                    videoPlayer.play().catch(e => console.log('Автозапуск заблоковано'));
+                                } else {
+                                    videoPlayer.pause();
+                                }
+                                console.log(`🔄 Синхронізація: ${data.is_playing ? 'play' : 'pause'}`);
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('Помилка синхронізації:', error);
+                }
+            }, 1000); // Синхронізація кожну секунду
+            
+            console.log('🔄 Синхронізація запущена');
+        }
+        
+        // Відправка стану кімнати
+        async function syncRoomState(isPlaying, currentTime) {
+            if (!currentRoomId || !isHost) return;
+            
+            try {
+                await fetch(`${API_BASE}/watch/sync/${currentRoomId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: 'host',
+                        is_playing: !isPlaying,
+                        current_time: currentTime
+                    })
+                });
+            } catch (error) {
+                console.error('Помилка відправки стану:', error);
+            }
+        }
+        
         // Очищення Blob URLs при закритті
         window.addEventListener('beforeunload', function() {
             if (window.currentBlobUrl) {
                 URL.revokeObjectURL(window.currentBlobUrl);
                 console.log('🧹 Blob URL очищено');
+            }
+            
+            if (syncInterval) {
+                clearInterval(syncInterval);
+                console.log('🛑 Синхронізація зупинена');
             }
         });
     </script>
@@ -1457,6 +1711,186 @@ def test_blob():
         import traceback
         print(traceback.format_exc())
         return jsonify({'error': f'Помилка тесту Blob: {str(e)}'}), 500
+
+# ===== WATCH TOGETHER СИСТЕМА =====
+
+@app.route('/api/watch/create-room', methods=['POST'])
+def create_watch_room():
+    """Створює кімнату для синхронізації перегляду"""
+    try:
+        import uuid
+        import time
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Потрібні дані'}), 400
+        
+        # Створюємо унікальну кімнату
+        room_id = str(uuid.uuid4())[:8]
+        host_id = data.get('host_id', 'unknown')
+        video_url = data.get('video_url')
+        video_title = data.get('video_title', 'Невідоме відео')
+        
+        # Зберігаємо кімнату
+        WATCH_ROOMS[room_id] = {
+            'host_id': host_id,
+            'video_url': video_url,
+            'video_title': video_title,
+            'is_playing': False,
+            'current_time': 0,
+            'last_update': time.time(),
+            'viewers': [host_id],
+            'created_at': time.time()
+        }
+        
+        print(f"🏠 Створено кімнату {room_id} для {video_title}")
+        
+        return jsonify({
+            'status': 'success',
+            'room_id': room_id,
+            'message': 'Кімната створена',
+            'video_url': video_url,
+            'video_title': video_title
+        })
+        
+    except Exception as e:
+        print(f"Помилка створення кімнати: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/watch/join-room/<room_id>', methods=['POST'])
+def join_watch_room(room_id):
+    """Приєднується до кімнати"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Потрібні дані'}), 400
+        
+        user_id = data.get('user_id', 'unknown')
+        
+        if room_id not in WATCH_ROOMS:
+            return jsonify({'error': 'Кімната не знайдена'}), 404
+        
+        room = WATCH_ROOMS[room_id]
+        
+        # Додаємо користувача
+        if user_id not in room['viewers']:
+            room['viewers'].append(user_id)
+        
+        room['last_update'] = time.time()
+        
+        print(f"👥 {user_id} приєднався до кімнати {room_id}")
+        
+        return jsonify({
+            'status': 'success',
+            'room_id': room_id,
+            'video_url': room['video_url'],
+            'video_title': room['video_title'],
+            'is_playing': room['is_playing'],
+            'current_time': room['current_time'],
+            'viewers_count': len(room['viewers'])
+        })
+        
+    except Exception as e:
+        print(f"Помилка приєднання: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/watch/sync/<room_id>', methods=['POST'])
+def sync_watch_room(room_id):
+    """Синхронізує стан перегляду"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Потрібні дані'}), 400
+        
+        if room_id not in WATCH_ROOMS:
+            return jsonify({'error': 'Кімната не знайдена'}), 404
+        
+        room = WATCH_ROOMS[room_id]
+        user_id = data.get('user_id')
+        
+        # Оновлюємо стан кімнати
+        room['is_playing'] = data.get('is_playing', False)
+        room['current_time'] = data.get('current_time', 0)
+        room['last_update'] = time.time()
+        
+        print(f"🔄 Синхронізація кімнати {room_id}: {room['is_playing']} @ {room['current_time']:.1f}s")
+        
+        return jsonify({
+            'status': 'success',
+            'is_playing': room['is_playing'],
+            'current_time': room['current_time'],
+            'viewers_count': len(room['viewers'])
+        })
+        
+    except Exception as e:
+        print(f"Помилка синхронізації: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/watch/room/<room_id>')
+def get_watch_room(room_id):
+    """Отримує стан кімнати"""
+    try:
+        if room_id not in WATCH_ROOMS:
+            return jsonify({'error': 'Кімната не знайдена'}), 404
+        
+        room = WATCH_ROOMS[room_id]
+        
+        # Очищуємо застарілі кімнати
+        if time.time() - room['last_update'] > ROOM_TIMEOUT:
+            del WATCH_ROOMS[room_id]
+            return jsonify({'error': 'Кімната застаріла'}), 410
+        
+        return jsonify({
+            'status': 'success',
+            'room_id': room_id,
+            'video_url': room['video_url'],
+            'video_title': room['video_title'],
+            'is_playing': room['is_playing'],
+            'current_time': room['current_time'],
+            'viewers_count': len(room['viewers']),
+            'created_at': room['created_at']
+        })
+        
+    except Exception as e:
+        print(f"Помилка отримання кімнати: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/watch/rooms')
+def list_watch_rooms():
+    """Список активних кімнат"""
+    try:
+        # Очищуємо застарілі кімнати
+        current_time = time.time()
+        expired_rooms = []
+        
+        for room_id, room in WATCH_ROOMS.items():
+            if current_time - room['last_update'] > ROOM_TIMEOUT:
+                expired_rooms.append(room_id)
+        
+        for room_id in expired_rooms:
+            del WATCH_ROOMS[room_id]
+            print(f"🗑️ Видалено застарілу кімнату {room_id}")
+        
+        # Повертаємо активні кімнати
+        active_rooms = []
+        for room_id, room in WATCH_ROOMS.items():
+            active_rooms.append({
+                'room_id': room_id,
+                'video_title': room['video_title'],
+                'viewers_count': len(room['viewers']),
+                'is_playing': room['is_playing'],
+                'created_at': room['created_at']
+            })
+        
+        return jsonify({
+            'status': 'success',
+            'rooms': active_rooms,
+            'total': len(active_rooms)
+        })
+        
+    except Exception as e:
+        print(f"Помилка списку кімнат: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/video-proxy/<path:video_url>')
 def video_proxy(video_url):
