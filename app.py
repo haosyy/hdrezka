@@ -29,7 +29,7 @@ CACHE_TIMEOUT_SECONDS = 3600 # 1 година
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="uk">
-    <head>
+<head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HdRezka API Test</title>
@@ -39,8 +39,34 @@ HTML_TEMPLATE = """
     <meta property="og:description" content="Дивіться фільми та серіали разом з друзями">
     <meta property="og:type" content="website">
     
-    <!-- Найпростіший CSP для тестування - дозволяє ВСЕ -->
-    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; media-src * data: blob:; img-src * data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src *; frame-src *;">
+    <!-- МАКСИМАЛЬНО ВІДКРИТИЙ CSP - дозволяє ВСЕ -->
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src * 'unsafe-inline' 'unsafe-eval' data: blob: filesystem:;
+        script-src * 'unsafe-inline' 'unsafe-eval' blob: data:;
+        style-src * 'unsafe-inline' data:;
+        img-src * data: blob: filesystem:;
+        font-src * data:;
+        connect-src * blob: data:;
+        media-src * blob: data: mediastream: filesystem:;
+        object-src *;
+        frame-src *;
+        worker-src * blob:;
+        child-src * blob:;
+        form-action *;
+        frame-ancestors *;
+    ">
+    
+    <!-- Crossorigin для відео -->
+    <script>
+        // Додаємо crossorigin="anonymous" до всіх відео елементів
+        document.addEventListener('DOMContentLoaded', function() {
+            const videos = document.querySelectorAll('video');
+            videos.forEach(video => {
+                video.setAttribute('crossorigin', 'anonymous');
+                console.log('✅ Встановлено crossorigin для відео');
+            });
+        });
+    </script>
     
     <script>
         // Перевіряємо Discord SDK
@@ -251,7 +277,11 @@ HTML_TEMPLATE = """
                 <label for="qualitySelect">Якість відео:</label>
                 <select id="qualitySelect" onchange="changeVideoQuality()"></select>
             </div>
-            <video id="videoPlayer" controls style="width: 100%; max-width: 800px; height: auto;">
+            <video id="videoPlayer" 
+                   controls 
+                   crossorigin="anonymous"
+                   preload="metadata"
+                   style="width: 100%; max-width: 800px; height: auto;">
                 Ваш браузер не підтримує відео
             </video>
             <div id="videoInfo" style="margin-top: 10px; font-size: 14px; color: #666;"></div>
@@ -615,6 +645,9 @@ HTML_TEMPLATE = """
         }
 
         function showVideoPlayer(videos) {
+            console.log('=== showVideoPlayer викликано ===');
+            console.log('Відео:', videos);
+            
             const qualities = Object.keys(videos).sort((a, b) => {
                 const aNum = parseInt(a);
                 const bNum = parseInt(b);
@@ -632,19 +665,109 @@ HTML_TEMPLATE = """
             if (qualities.length > 0) {
                 const bestQuality = qualities[0];
                 qualitySelect.value = bestQuality;
+                
+                console.log(`Встановлюємо відео якості ${bestQuality}`);
+                console.log(`URL: ${videos[bestQuality]}`);
+                
+                // ВАЖЛИВО: Встановлюємо crossorigin
+                videoPlayer.setAttribute('crossorigin', 'anonymous');
+                
+                // Встановлюємо джерело
                 videoPlayer.src = videos[bestQuality];
+                
+                // Детальні обробники помилок
+                videoPlayer.onerror = function(e) {
+                    console.error('❌ ПОМИЛКА ВІДЕО:');
+                    console.error('Event:', e);
+                    console.error('Error code:', videoPlayer.error?.code);
+                    console.error('Error message:', videoPlayer.error?.message);
+                    console.error('Network state:', videoPlayer.networkState);
+                    console.error('Ready state:', videoPlayer.readyState);
+                    console.error('Current src:', videoPlayer.currentSrc);
+                    
+                    // Показуємо помилку користувачу
+                    const errorMessages = {
+                        1: 'MEDIA_ERR_ABORTED - Завантаження скасовано',
+                        2: 'MEDIA_ERR_NETWORK - Помилка мережі',
+                        3: 'MEDIA_ERR_DECODE - Помилка декодування',
+                        4: 'MEDIA_ERR_SRC_NOT_SUPPORTED - Формат не підтримується'
+                    };
+                    
+                    const errorMsg = videoPlayer.error ? 
+                        errorMessages[videoPlayer.error.code] : 
+                        'Невідома помилка';
+                    
+                    videoInfoDiv.innerHTML = `
+                        <span style="color: red; font-weight: bold;">
+                            ❌ Помилка: ${errorMsg}
+                            <br>Код: ${videoPlayer.error?.code}
+                            <br>Перевірте консоль (F12) для деталей
+                        </span>
+                    `;
+                };
+                
+                videoPlayer.onloadstart = function() {
+                    console.log('⏳ Почалось завантаження відео...');
+                };
+                
+                videoPlayer.onloadedmetadata = function() {
+                    console.log('✅ Метадані завантажено');
+                    console.log('Duration:', videoPlayer.duration);
+                    console.log('Video dimensions:', videoPlayer.videoWidth, 'x', videoPlayer.videoHeight);
+                };
+                
+                videoPlayer.onloadeddata = function() {
+                    console.log('✅ Дані завантажено, можна відтворювати');
+                };
+                
+                videoPlayer.oncanplay = function() {
+                    console.log('✅ Відео готове до відтворення');
+                };
+                
+                videoPlayer.oncanplaythrough = function() {
+                    console.log('✅ Відео може відтворюватись без пауз');
+                };
+                
+                videoPlayer.onprogress = function() {
+                    if (videoPlayer.buffered.length > 0) {
+                        const bufferedEnd = videoPlayer.buffered.end(videoPlayer.buffered.length - 1);
+                        const duration = videoPlayer.duration;
+                        const percentLoaded = (bufferedEnd / duration) * 100;
+                        console.log(`📊 Завантажено: ${percentLoaded.toFixed(1)}%`);
+                    }
+                };
+                
+                videoPlayer.onstalled = function() {
+                    console.warn('⚠️ Завантаження застопорилось');
+                };
+                
+                videoPlayer.onsuspend = function() {
+                    console.log('⏸️ Завантаження призупинено');
+                };
+                
+                // Завантажуємо відео
+                console.log('Викликаємо videoPlayer.load()...');
                 videoPlayer.load();
+                
                 updateVideoInfo(bestQuality, videos[bestQuality]);
             }
             
             videoContainerDiv.style.display = 'block';
+            console.log('✅ Відео контейнер показано');
         }
 
         function changeVideoQuality() {
             const selectedQuality = qualitySelect.value;
             
             if (currentStreamData && currentStreamData.videos[selectedQuality]) {
+                console.log(`Змінюємо якість на ${selectedQuality}`);
+                console.log(`URL: ${currentStreamData.videos[selectedQuality]}`);
+                
                 const currentTime = videoPlayer.currentTime;
+                
+                // ВАЖЛИВО: Встановлюємо crossorigin
+                videoPlayer.setAttribute('crossorigin', 'anonymous');
+                
                 videoPlayer.src = currentStreamData.videos[selectedQuality];
                 videoPlayer.load();
                 videoPlayer.currentTime = currentTime;
