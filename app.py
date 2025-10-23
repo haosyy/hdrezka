@@ -948,6 +948,38 @@ def stream_test():
         print(f"Помилка в stream_test: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/video-proxy/<path:video_url>')
+def video_proxy(video_url):
+    """Проксі для відео через наш сервер"""
+    try:
+        import requests
+        from flask import Response
+        
+        # Декодуємо URL
+        import urllib.parse
+        video_url = urllib.parse.unquote(video_url)
+        
+        print(f"Проксі відео: {video_url}")
+        
+        # Отримуємо відео з оригінального джерела
+        response = requests.get(video_url, stream=True, timeout=30)
+        response.raise_for_status()
+        
+        # Повертаємо відео через наш сервер
+        return Response(
+            response.iter_content(chunk_size=8192),
+            mimetype=response.headers.get('content-type', 'video/mp4'),
+            headers={
+                'Content-Length': response.headers.get('content-length', ''),
+                'Accept-Ranges': 'bytes',
+                'Cache-Control': 'public, max-age=3600'
+            }
+        )
+        
+    except Exception as e:
+        print(f"Помилка проксі відео: {e}")
+        return jsonify({'error': f'Помилка проксі відео: {str(e)}'}), 500
+
 @app.route('/api/parse', methods=['POST'])
 def parse_content():
     try:
@@ -1039,12 +1071,16 @@ def get_stream():
         if not url or not translation:
             return jsonify({'error': 'URL та переклад є обов\'язковими'}), 400
         
-        # Тимчасово повертаємо тестові дані замість HdRezka
-        print("Повертаємо тестові дані замість HdRezka")
+        # Тимчасово повертаємо тестові дані через проксі
+        print("Повертаємо тестові дані через проксі")
+        
+        # Отримуємо базовий URL для проксі
+        base_url = request.url_root.rstrip('/')
+        
         result = {
             'videos': {
-                '720': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-                '1080': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4'
+                '720': f'{base_url}/api/video-proxy/https%3A//commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+                '1080': f'{base_url}/api/video-proxy/https%3A//commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4'
             },
             'season': season,
             'episode': episode,
