@@ -39,22 +39,8 @@ HTML_TEMPLATE = """
     <meta property="og:description" content="Дивіться фільми та серіали разом з друзями">
     <meta property="og:type" content="website">
     
-    <!-- МАКСИМАЛЬНО ВІДКРИТИЙ CSP - дозволяє ВСЕ -->
-    <meta http-equiv="Content-Security-Policy" content="
-        default-src * 'unsafe-inline' 'unsafe-eval' data: blob: filesystem:;
-        script-src * 'unsafe-inline' 'unsafe-eval' blob: data:;
-        style-src * 'unsafe-inline' data:;
-        img-src * data: blob: filesystem:;
-        font-src * data:;
-        connect-src * blob: data:;
-        media-src * blob: data: mediastream: filesystem:;
-        object-src *;
-        frame-src *;
-        worker-src * blob:;
-        child-src * blob:;
-        form-action *;
-        frame-ancestors *;
-    ">
+    <!-- Discord перезапише цей CSP своїм -->
+    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;">
     
     <!-- Crossorigin для відео -->
     <script>
@@ -1211,16 +1197,28 @@ def stream_test():
         data = request.get_json()
         print(f"Отримані дані: {data}")
         
-        # ПРЯМІ посилання - БЕЗ проксі
+        # ТЕСТОВІ ВІДЕО ЧЕРЕЗ ПРОКСІ (Discord вимагає)
+        base_url = request.url_root.rstrip('/')
+        if base_url.startswith('http://'):
+            base_url = base_url.replace('http://', 'https://')
+        
+        import urllib.parse
+        test_videos = {
+            '360p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+            '720p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
+            '1080p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4'
+        }
+        
+        proxied_videos = {}
+        for quality, video_url in test_videos.items():
+            encoded_url = urllib.parse.quote(video_url, safe='')
+            proxied_videos[quality] = f'{base_url}/api/video-proxy/{encoded_url}'
+        
         return jsonify({
             'status': 'success',
-            'message': 'Stream test працює! (прямі посилання)',
+            'message': 'Stream test працює! (через проксі)',
             'received_data': data,
-            'test_videos': {
-                '360p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-                '720p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
-                '1080p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4'
-            },
+            'test_videos': proxied_videos,
             'timestamp': time()
         })
     except Exception as e:
@@ -1362,46 +1360,138 @@ def test_direct():
 
 @app.route('/api/video-proxy/<path:video_url>')
 def video_proxy(video_url):
-    """Проксі для відео через наш сервер"""
+    """Проксі для відео з повною підтримкою Range requests"""
     try:
         import requests
-        from flask import Response
+        from flask import Response, stream_with_context
+        import urllib.parse
         
         # Декодуємо URL
-        import urllib.parse
         video_url = urllib.parse.unquote(video_url)
         
-        print(f"=== ВІДЕО ПРОКСІ ВИКЛИКАНО ===")
-        print(f"Оригінальний URL: {video_url}")
-        print(f"Headers: {dict(request.headers)}")
+        print(f"\n=== ВІДЕО ПРОКСІ ===")
+        print(f"URL: {video_url}")
+        print(f"Client headers: {dict(request.headers)}")
         
-        # Отримуємо відео з оригінального джерела
-        response = requests.get(video_url, stream=True, timeout=30)
-        response.raise_for_status()
+        # Підготовка заголовків
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.9',
+        }
         
-        print(f"Відео отримано: {response.status_code}")
+        # КРИТИЧНО: Передаємо Range заголовок
+        range_header = request.headers.get('Range')
+        if range_header:
+            headers['Range'] = range_header
+            print(f"📊 Range request: {range_header}")
+        
+        # Запит до оригінального відео
+        print(f"🌐 Запит до: {video_url}")
+        response = requests.get(
+            video_url, 
+            headers=headers,
+            stream=True,
+            timeout=30
+        )
+        
+        print(f"✅ Статус: {response.status_code}")
         print(f"Content-Type: {response.headers.get('content-type')}")
         print(f"Content-Length: {response.headers.get('content-length')}")
         
-        # Повертаємо відео через наш сервер
+        if range_header:
+            print(f"Content-Range: {response.headers.get('content-range', 'Not provided')}")
+        
+        # Підготовка заголовків відповіді
+        response_headers = {
+            'Content-Type': response.headers.get('content-type', 'video/mp4'),
+            'Accept-Ranges': 'bytes',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+            'Access-Control-Allow-Headers': 'Range, Content-Type, Accept',
+            'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
+            'Cache-Control': 'public, max-age=3600',
+        }
+        
+        # Додаємо Content-Length
+        if response.headers.get('content-length'):
+            response_headers['Content-Length'] = response.headers.get('content-length')
+        
+        # КРИТИЧНО: Додаємо Content-Range для Range requests
+        if response.headers.get('content-range'):
+            response_headers['Content-Range'] = response.headers.get('content-range')
+            print(f"📤 Відправляємо Content-Range: {response_headers['Content-Range']}")
+        
+        # Streaming генератор
+        def generate():
+            try:
+                bytes_sent = 0
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        bytes_sent += len(chunk)
+                        yield chunk
+                print(f"✅ Надіслано {bytes_sent} байт")
+            except Exception as e:
+                print(f"❌ Помилка в generate: {e}")
+                raise
+        
+        # Повертаємо відповідь
+        # 206 Partial Content для Range requests, 200 для повного файлу
+        status_code = response.status_code
+        print(f"📤 Повертаємо статус: {status_code}")
+        
         return Response(
-            response.iter_content(chunk_size=8192),
-            mimetype=response.headers.get('content-type', 'video/mp4'),
-            headers={
-                'Content-Length': response.headers.get('content-length', ''),
-                'Accept-Ranges': 'bytes',
-                'Cache-Control': 'public, max-age=3600',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type'
-            }
+            stream_with_context(generate()),
+            status=status_code,
+            headers=response_headers,
+            direct_passthrough=True
         )
         
-    except Exception as e:
-        print(f"Помилка проксі відео: {e}")
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Помилка запиту: {e}")
         import traceback
         print(traceback.format_exc())
-        return jsonify({'error': f'Помилка проксі відео: {str(e)}'}), 500
+        return jsonify({'error': str(e)}), 502
+        
+    except Exception as e:
+        print(f"❌ Загальна помилка: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/video-proxy/<path:video_url>', methods=['OPTIONS'])
+def video_proxy_options(video_url):
+    """CORS preflight"""
+    return '', 204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+        'Access-Control-Allow-Headers': 'Range, Content-Type, Accept',
+        'Access-Control-Max-Age': '3600'
+    }
+
+@app.route('/api/video-proxy/<path:video_url>', methods=['HEAD'])
+def video_proxy_head(video_url):
+    """HEAD запит для отримання інформації про відео"""
+    try:
+        import requests
+        import urllib.parse
+        
+        video_url = urllib.parse.unquote(video_url)
+        
+        print(f"HEAD запит: {video_url}")
+        
+        response = requests.head(video_url, timeout=10)
+        
+        return '', response.status_code, {
+            'Content-Type': response.headers.get('content-type', 'video/mp4'),
+            'Content-Length': response.headers.get('content-length', '0'),
+            'Accept-Ranges': 'bytes',
+            'Access-Control-Allow-Origin': '*'
+        }
+        
+    except Exception as e:
+        print(f"HEAD помилка: {e}")
+        return '', 500
 
 @app.route('/api/parse', methods=['POST'])
 def parse_content():
@@ -1494,23 +1584,41 @@ def get_stream():
         if not url or not translation:
             return jsonify({'error': 'URL та переклад є обов\'язковими'}), 400
         
-        # ===== ТЕСТОВІ ВІДЕО БЕЗ ПРОКСІ =====
-        print("⚠️ Використовуємо тестові відео (прямі посилання)")
+        # ===== ТЕСТОВІ ВІДЕО ЧЕРЕЗ ПРОКСІ =====
+        print("⚠️ Використовуємо тестові відео через проксі")
         
-        # ПРЯМІ посилання - БЕЗ проксі
+        # Отримуємо базовий URL
+        base_url = request.url_root.rstrip('/')
+        if base_url.startswith('http://'):
+            base_url = base_url.replace('http://', 'https://')
+        
+        print(f"Base URL: {base_url}")
+        
+        # Тестові відео
+        test_videos = {
+            '360p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+            '720p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
+            '1080p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4'
+        }
+        
+        # Проксіруємо через наш домен
+        import urllib.parse
+        proxied_videos = {}
+        for quality, video_url in test_videos.items():
+            encoded_url = urllib.parse.quote(video_url, safe='')
+            proxied_url = f'{base_url}/api/video-proxy/{encoded_url}'
+            proxied_videos[quality] = proxied_url
+            print(f"  {quality}: {proxied_url}")
+        
         result = {
-            'videos': {
-                '360p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-                '720p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
-                '1080p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4'
-            },
+            'videos': proxied_videos,
             'season': season,
             'episode': episode,
             'test_mode': True,
-            'message': '⚠️ Тестовий режим - прямі посилання на відео'
+            'message': '⚠️ Тестові відео через проксі (Discord вимагає)'
         }
         
-        print(f"✅ Повертаємо {len(result['videos'])} якостей відео")
+        print(f"✅ Повертаємо {len(proxied_videos)} якостей через проксі")
         return jsonify(result)
         
     except Exception as e:
