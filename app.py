@@ -67,13 +67,28 @@ HTML_TEMPLATE = """
             color: white;
             cursor: pointer;
             font-size: 16px;
+            border: none;
+            outline: none;
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            touch-action: manipulation;
         }
         button:hover {
             background: #45a049;
         }
+        button:active {
+            background: #3d8b40;
+            transform: translateY(1px);
+        }
         button:disabled {
             background: #ccc;
             cursor: not-allowed;
+        }
+        button:focus {
+            outline: 2px solid #4CAF50;
+            outline-offset: 2px;
         }
         .result {
             background: #f9f9f9;
@@ -110,11 +125,44 @@ HTML_TEMPLATE = """
         #seasonEpisodeControls {
             display: none;
         }
+        
+        /* Спеціальні стилі для Discord Activities */
+        button:focus-visible {
+            outline: 2px solid #4CAF50;
+            outline-offset: 2px;
+        }
+        
+        button:not(:disabled):hover {
+            box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
+        }
+        
+        button:not(:disabled):active {
+            box-shadow: 0 1px 4px rgba(76, 175, 80, 0.3);
+        }
+        
+        /* Покращення для input полів */
+        input:focus, select:focus {
+            outline: 2px solid #4CAF50;
+            outline-offset: 2px;
+            border-color: #4CAF50;
+        }
+        
+        /* Анімації для кращого UX */
+        .result {
+            transition: all 0.3s ease;
+        }
+        
+        .container {
+            transition: all 0.3s ease;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h2>🎬 HdRezka API Tester</h2>
+        <div id="modeIndicator" style="background: #e3f2fd; border: 1px solid #2196f3; padding: 10px; border-radius: 4px; margin-bottom: 20px; text-align: center;">
+            <span id="modeText">🔄 Перевірка режиму роботи...</span>
+        </div>
         
         <div class="form-group">
             <label for="url">URL сайту:</label>
@@ -122,9 +170,10 @@ HTML_TEMPLATE = """
                    value="https://hdrezka.me/animation/adventures/31356-arifureta-silneyshiy-remeslennik-v-mire-tv-1-2019.html#t:111-s:1-e:3">
         </div>
 
-        <button onclick="parseContent()">📥 Парсити контент</button>
-        <button onclick="testAPI()" style="background: #2196F3; margin-left: 10px;">🧪 Тест API</button>
-        <button onclick="testDomains()" style="background: #FF9800; margin-left: 10px;">🌐 Тест доменів</button>
+        <button onclick="parseContent()" data-action="parse">📥 Парсити контент</button>
+        <button onclick="testAPI()" data-action="test" style="background: #2196F3; margin-left: 10px;">🧪 Тест API</button>
+        <button onclick="testDomains()" data-action="domains" style="background: #FF9800; margin-left: 10px;">🌐 Тест доменів</button>
+        <button onclick="debugInfo()" data-action="debug" style="background: #9C27B0; margin-left: 10px;">🔍 Debug</button>
         <div id="parseResult" class="result" style="display: none;"></div>
     </div>
 
@@ -148,7 +197,7 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <button onclick="getStream()">🎬 Отримати стрім</button>
+        <button onclick="getStream()" data-action="stream">🎬 Отримати стрім</button>
         <div id="streamResult" class="result" style="display: none;"></div>
         
         <div id="videoContainer" style="display: none; margin-top: 20px;">
@@ -169,11 +218,23 @@ HTML_TEMPLATE = """
         let discordSDK;
         
         async function initializeDiscordSDK() {
+            const modeIndicator = document.getElementById('modeIndicator');
+            const modeText = document.getElementById('modeText');
+            
+            // Перевіряємо, чи доступний DiscordSDK
+            if (typeof DiscordSDK === 'undefined') {
+                console.log('Discord SDK не завантажений - працюємо як звичайний сайт');
+                modeIndicator.style.background = '#fff3e0';
+                modeIndicator.style.borderColor = '#ff9800';
+                modeText.innerHTML = '🌐 Локальний режим - працюємо як звичайний сайт';
+                return;
+            }
+            
             try {
-                discordSDK = new DiscordSDK('848279368462499851'); // Замініть на ваш Client ID
+                discordSDK = new DiscordSDK('1382172131051307038');
                 
                 const { code } = await discordSDK.commands.authorize({
-                    client_id: '848279368462499851', // Замініть на ваш Client ID
+                    client_id: '1382172131051307038',
                     response_type: 'code',
                     state: '',
                     prompt: 'none',
@@ -181,18 +242,102 @@ HTML_TEMPLATE = """
                 });
                 
                 console.log('Discord SDK ініціалізовано успішно');
-                
-                // Оновлюємо заголовок сторінки для Discord Activities
                 document.title = 'HdRezka - Discord Activity';
                 
+                modeIndicator.style.background = '#e8f5e8';
+                modeIndicator.style.borderColor = '#4caf50';
+                modeText.innerHTML = '🎮 Discord Activities режим - працюємо в Discord!';
+                
             } catch (error) {
-                console.log('Discord SDK не доступний (запуск поза Discord):', error);
-                // Якщо не в Discord, працюємо як звичайний сайт
+                console.log('Discord SDK не доступний (запуск поза Discord):', error.message);
+                
+                modeIndicator.style.background = '#fff3e0';
+                modeIndicator.style.borderColor = '#ff9800';
+                modeText.innerHTML = '🌐 Локальний режим - працюємо як звичайний сайт';
             }
         }
         
         // Ініціалізуємо Discord SDK при завантаженні сторінки
         window.addEventListener('load', initializeDiscordSDK);
+        
+        // Додаємо спеціальні обробники для Discord Activities
+        document.addEventListener('DOMContentLoaded', function() {
+            // Додаємо обробники для всіх кнопок
+            const buttons = document.querySelectorAll('button');
+            buttons.forEach(button => {
+                // Додаємо обробники подій для Discord Activities
+                button.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    // Додаємо візуальний фідбек
+                    this.style.transform = 'scale(0.95)';
+                    setTimeout(() => {
+                        this.style.transform = '';
+                    }, 150);
+                    
+                    // Викликаємо функцію кнопки
+                    const onclick = this.getAttribute('onclick');
+                    const dataAction = this.getAttribute('data-action');
+                    
+                    if (onclick) {
+                        try {
+                            eval(onclick);
+                        } catch (error) {
+                            console.error('Помилка виконання onclick:', error);
+                        }
+                    } else if (dataAction) {
+                        // Альтернативний спосіб через data-action
+                        try {
+                            switch(dataAction) {
+                                case 'parse':
+                                    parseContent();
+                                    break;
+                                case 'test':
+                                    testAPI();
+                                    break;
+                                case 'domains':
+                                    testDomains();
+                                    break;
+                                case 'stream':
+                                    getStream();
+                                    break;
+                                case 'debug':
+                                    debugInfo();
+                                    break;
+                                default:
+                                    console.log('Невідома дія:', dataAction);
+                            }
+                        } catch (error) {
+                            console.error('Помилка виконання data-action:', error);
+                        }
+                    }
+                });
+                
+                // Додаємо обробники для клавіатури
+                button.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        this.click();
+                    }
+                });
+            });
+            
+            // Додаємо обробники для input полів
+            const inputs = document.querySelectorAll('input, select');
+            inputs.forEach(input => {
+                input.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        // Шукаємо кнопку після поля
+                        const nextButton = this.parentElement.querySelector('button');
+                        if (nextButton) {
+                            nextButton.click();
+                        }
+                    }
+                });
+            });
+        });
         
         const API_BASE = '/api';
         let currentData = null;
@@ -578,6 +723,39 @@ HTML_TEMPLATE = """
                 timestamp: new Date().toISOString()
             });
         }
+        
+        // Функція для debug інформації
+        async function debugInfo() {
+            const parseResultDiv = document.getElementById('parseResult');
+            showLoading(parseResultDiv, 'Отримання debug інформації...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/debug`, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                console.log('Debug - статус:', response.status);
+                
+                // Перевіряємо, чи відповідь є JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Debug повернув не JSON:', text);
+                    showResult(parseResultDiv, `Debug повернув не JSON дані:\n${text}`, true);
+                    return;
+                }
+                
+                const data = await response.json();
+                showResult(parseResultDiv, data);
+                
+                console.log('Debug успішний:', data);
+                
+            } catch (error) {
+                console.error('Помилка debug:', error);
+                showResult(parseResultDiv, `Помилка debug: ${error.message}`, true);
+            }
+        }
     </script>
 </body>
 </html>
@@ -624,6 +802,27 @@ def test_api():
         'method': request.method,
         'headers': dict(request.headers),
         'data': request.get_json() if request.is_json else None
+    })
+
+@app.route('/api/debug', methods=['GET'])
+def debug_info():
+    """Діагностичний endpoint для перевірки налаштувань"""
+    return jsonify({
+        'status': 'success',
+        'message': 'Debug інформація',
+        'timestamp': time(),
+        'environment': {
+            'PORT': os.environ.get('PORT', 'не встановлено'),
+            'PYTHON_VERSION': os.environ.get('PYTHON_VERSION', 'не встановлено'),
+            'RAILWAY_ENVIRONMENT': os.environ.get('RAILWAY_ENVIRONMENT', 'не встановлено'),
+            'RAILWAY_PROJECT_ID': os.environ.get('RAILWAY_PROJECT_ID', 'не встановлено')
+        },
+        'request_info': {
+            'method': request.method,
+            'url': request.url,
+            'headers': dict(request.headers),
+            'remote_addr': request.remote_addr
+        }
     })
 
 @app.route('/api/parse', methods=['POST'])
@@ -679,12 +878,14 @@ def parse_content():
         
         # Додаткова інформація про помилку для користувача
         error_message = str(e)
-        if "403" in error_message:
-            error_message = "Сайт тимчасово заблокував доступ. Спробуйте пізніше або використайте інший URL."
+        if "403" in error_message or "Forbidden" in error_message:
+            error_message = "🚫 HdRezka заблокував доступ з серверів Render.com. Спробуйте:\n• Інший URL з HdRezka\n• Простіший фільм\n• Пізніше (менше навантаження)\n• Використати VPN"
         elif "404" in error_message:
-            error_message = "URL не знайдено. Перевірте правильність посилання."
-        elif "timeout" in error_message.lower():
-            error_message = "Час очікування вичерпано. Спробуйте ще раз."
+            error_message = "❌ URL не знайдено. Перевірте правильність посилання."
+        elif "timeout" in error_message.lower() or "timed out" in error_message.lower():
+            error_message = "⏰ Час очікування вичерпано. HdRezka занадто повільно відповідає."
+        elif "Не вдалося отримати доступ до жодного домену" in error_message:
+            error_message = "🌐 Всі домени HdRezka заблоковані для серверів Render.com. Спробуйте інший URL або пізніше."
         
         return jsonify({'error': error_message}), 500
 

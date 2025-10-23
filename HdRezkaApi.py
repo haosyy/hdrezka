@@ -56,6 +56,21 @@ class HdRezkaApi():
 			'https://hdrezka.ua'
 		]
 		
+		# Додаткові заголовки для обходу блокувань
+		self.session.headers.update({
+			'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+			'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8,uk;q=0.7',
+			'Accept-Encoding': 'gzip, deflate, br',
+			'Connection': 'keep-alive',
+			'Upgrade-Insecure-Requests': '1',
+			'Sec-Fetch-Dest': 'document',
+			'Sec-Fetch-Mode': 'navigate',
+			'Sec-Fetch-Site': 'none',
+			'Sec-Fetch-User': '?1',
+			'Cache-Control': 'max-age=0',
+			'DNT': '1'
+		})
+		
 		self.url = self.normalize_url(url)
 		self.page = self.getPage()
 		self.page.raise_for_status() # Перевірка на HTTP помилки (4xx, 5xx)
@@ -126,59 +141,73 @@ class HdRezkaApi():
 
 	def getPage(self):
 		# Додаємо затримку та повторні спроби
-		max_retries = 5
+		max_retries = 3  # Зменшуємо кількість спроб для Render
 		
 		for attempt in range(max_retries):
 			try:
-				# Спочатку пробуємо головну сторінку
-				main_url = "https://rezka.ag/"
-				print(f"Спроба {attempt + 1}: отримуємо головну сторінку для cookies")
-				main_response = self.session.get(main_url, timeout=10)
+				# Різні User-Agent для кожного домену
+				user_agents = [
+					'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+					'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+					'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+				]
 				
-				# Тепер пробуємо наш URL
-				response = self.session.get(self.url, timeout=15)
+				# Змінюємо User-Agent
+				self.session.headers.update({'User-Agent': user_agents[attempt % len(user_agents)]})
 				
-				# Якщо отримали 403, пробуємо різні методи
-				if response.status_code == 403:
-					print(f"Спроба {attempt + 1}: отримано 403, застосовуємо обхід")
-					
-					# Різні User-Agent
-					user_agents = [
-						'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-						'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-						'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
-						'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-						'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1'
-					]
-					
-					# Змінюємо User-Agent
-					self.session.headers.update({'User-Agent': user_agents[attempt % len(user_agents)]})
-					
-					# Додаємо додаткові заголовки
-					self.session.headers.update({
-						'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-						'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8,uk;q=0.7',
-						'Accept-Encoding': 'gzip, deflate, br',
-						'DNT': '1',
-						'Connection': 'keep-alive',
-						'Upgrade-Insecure-Requests': '1',
-					})
-					
-					time.sleep(3 + attempt)  # Збільшуємо затримку з кожною спробою
-					continue
+				# Пробуємо різні домени
+				domains_to_try = [
+					'https://rezka.ag',
+					'https://hdrezka.ag',
+					'https://hdrezka.me'
+				]
 				
-				return response
+				for domain in domains_to_try:
+					try:
+						# Формуємо URL для поточного домену
+						path = self.url.split('.html')[0] + '.html'
+						if 'rezka.ag' in path:
+							test_url = path.replace('https://rezka.ag', domain)
+						elif 'hdrezka.ag' in path:
+							test_url = path.replace('https://hdrezka.ag', domain)
+						elif 'hdrezka.me' in path:
+							test_url = path.replace('https://hdrezka.me', domain)
+						else:
+							test_url = domain + path
+						
+						print(f"Спроба {attempt + 1}: тестуємо {test_url}")
+						
+						# Збільшуємо timeout для Render
+						response = self.session.get(test_url, timeout=30)
+						
+						# Якщо успішно, повертаємо відповідь
+						if response.status_code == 200:
+							print(f"Успішно отримано відповідь з {domain}")
+							return response
+						elif response.status_code == 403:
+							print(f"403 з {domain}, пробуємо наступний")
+							continue
+						else:
+							print(f"Статус {response.status_code} з {domain}")
+							continue
+							
+					except requests.exceptions.RequestException as e:
+						print(f"Помилка з {domain}: {e}")
+						continue
 				
-			except requests.exceptions.RequestException as e:
-				print(f"Спроба {attempt + 1}: помилка запиту - {e}")
+				# Якщо всі домени не спрацювали, чекаємо перед наступною спробою
 				if attempt < max_retries - 1:
-					time.sleep(5 + attempt)  # Збільшуємо затримку
-					continue
-				else:
-					raise e
+					wait_time = 10 + (attempt * 5)
+					print(f"Всі домени заблоковані, чекаємо {wait_time} секунд...")
+					time.sleep(wait_time)
+				
+			except Exception as e:
+				print(f"Загальна помилка спроби {attempt + 1}: {e}")
+				if attempt < max_retries - 1:
+					time.sleep(15)
 		
-		# Якщо всі спроби невдалі, повертаємо останню відповідь
-		return self.session.get(self.url, timeout=15)
+		# Якщо всі спроби невдалі, кидаємо помилку
+		raise requests.exceptions.HTTPError("Не вдалося отримати доступ до жодного домену HdRezka")
 
 	def getSoup(self):
 		return BeautifulSoup(self.page.content, 'html.parser')
