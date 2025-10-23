@@ -1143,26 +1143,21 @@ def parse_content():
             return jsonify(cached_item['data'])
 
         print(f"Кеш не знайдено або застарів. Виконую парсинг для URL: {url}")
+        # Створюємо екземпляр API
+        rezka = HdRezkaApi(url)
         
-        # Тимчасово повертаємо тестові дані замість HdRezka
-        print("Повертаємо тестові дані замість HdRezka")
+        # Отримуємо базову інформацію
+        # Використовуємо rezka.id, rezka.name, rezka.type, щоб спрацювали @property
         result = {
-            'name': 'Тестовий фільм',
-            'type': 'video.tv_series',
-            'id': 'test123',
-            'translations': {
-                'Українська': '1',
-                'Російська': '2',
-                'Англійська': '3'
-            },
-            'seasons': {
-                '1': {
-                    '1': 'Серія 1',
-                    '2': 'Серія 2',
-                    '3': 'Серія 3'
-                }
-            }
+            'name': rezka.name,
+            'type': rezka.type,
+            'id': rezka.id,
+            'translations': rezka.getTranslations()
         }
+        
+        # Якщо це серіал, отримуємо сезони та епізоди
+        if rezka.type == 'video.tv_series':
+            result['seasons'] = rezka.getSeasons()
         
         # Зберігаємо результат в кеш
         CACHE[url] = {
@@ -1216,19 +1211,20 @@ def get_stream():
         if not url or not translation:
             return jsonify({'error': 'URL та переклад є обов\'язковими'}), 400
         
-        # Тимчасово повертаємо тестові дані як data URLs
-        print("Повертаємо тестові дані як data URLs")
+        # Створюємо екземпляр API
+        rezka = HdRezkaApi(url)
         
-        # Створюємо мінімальні data URLs для тестування
+        # Отримуємо стрім
+        stream = rezka.getStream(season, episode, translation)
+        
+        # Перевіряємо, чи отримали ми дані
+        if not stream or not hasattr(stream, 'videos'):
+            return jsonify({'error': 'Не вдалося отримати стрім'}), 404
+        
         result = {
-            'videos': {
-                '720': 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAAs1tZGF0AAACrgYF//+q3EXpvebZSLeWLNgg2SPu73gyNjQgLSBjb3JlIDE2MSByMzA4MSBkY2FhY2UxIC0gSC4yNjQvTVBFRy00IEFWQyBjb2RlYyAtIENvcHlsZWZ0IDIwMDMtMjAyMSAtIGh0dHA6Ly93d3cudmlkZW9sYW4ub3JnL3gyNjQuaHRtbCAtIG9wdGlvbnM6IGNhYmFjPTEgcmVmPTMgZGVibG9jaz0xOjA6MCBhbmFseXNlPTB4MzoweDExMyBtZT1oZXggc3VibWU9NyBwc3k9MSBwc3lfcmQ9MS4wMDowLjAwIG1peGVkX3JlZj0xIG1lX3JhbmdlPTE2IGNocm9tYV9tZT0xIHRyZWxsaXM9MSA4eDhkY3Q9MSBjcW09MCBkZWFkem9uZT0yMSwxMSBmYXN0X3Bza2lwPTEgY2hyb21hX3FwX29mZnNldD0tMiB0bHQ9OSBub3JmYWxfaWQ9MSBhdXRvPTEgZ2VvbV9hdXRvPTEgaWQ9MSB0aXRsZT0x',
-                '1080': 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAAs1tZGF0AAACrgYF//+q3EXpvebZSLeWLNgg2SPu73gyNjQgLSBjb3JlIDE2MSByMzA4MSBkY2FhY2UxIC0gSC4yNjQvTVBFRy00IEFWQyBjb2RlYyAtIENvcHlsZWZ0IDIwMDMtMjAyMSAtIGh0dHA6Ly93d3cudmlkZW9sYW4ub3JnL3gyNjQuaHRtbCAtIG9wdGlvbnM6IGNhYmFjPTEgcmVmPTMgZGVibG9jaz0xOjA6MCBhbmFseXNlPTB4MzoweDExMyBtZT1oZXggc3VibWU9NyBwc3k9MSBwc3lfcmQ9MS4wMDowLjAwIG1peGVkX3JlZj0xIG1lX3JhbmdlPTE2IGNocm9tYV9tZT0xIHRyZWxsaXM9MSA4eDhkY3Q9MSBjcW09MCBkZWFkem9uZT0yMSwxMSBmYXN0X3Bza2lwPTEgY2hyb21hX3FwX29mZnNldD0tMiB0bHQ9OSBub3JmYWxfaWQ9MSBhdXRvPTEgZ2VvbV9hdXRvPTEgaWQ9MSB0aXRsZT0x'
-            },
-            'season': season,
-            'episode': episode,
-            'test_mode': True,
-            'message': 'Тестовий режим - HdRezka тимчасово відключено'
+            'videos': stream.videos,
+            'season': stream.season,
+            'episode': stream.episode
         }
         
         print(f"Повертаємо результат: {result}")
