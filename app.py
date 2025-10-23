@@ -240,6 +240,7 @@ HTML_TEMPLATE = """
 
         <button data-action="stream">🎬 Отримати стрім</button>
         <button data-action="stream-test" style="background: #E91E63; margin-left: 10px;">🧪 Тест стріму</button>
+        <button data-action="test-video" style="background: #FF5722; margin-left: 10px;">🎥 Тест відео</button>
         <div id="streamResult" class="result" style="display: none;"></div>
         
         <div id="videoContainer" style="display: none; margin-top: 20px;">
@@ -356,6 +357,9 @@ HTML_TEMPLATE = """
                                     break;
                                 case 'stream-test':
                                     testStream();
+                                    break;
+                                case 'test-video':
+                                    testVideo();
                                     break;
                                 default:
                                     console.log('Невідома дія:', dataAction);
@@ -882,6 +886,39 @@ HTML_TEMPLATE = """
                 showResult(streamResultDiv, `Помилка stream test: ${error.message}`, true);
             }
         }
+        
+        // Функція для тестування відео
+        async function testVideo() {
+            const streamResultDiv = document.getElementById('streamResult');
+            showLoading(streamResultDiv, 'Тестування відео...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/test-video`, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                console.log('Video test - статус:', response.status);
+                
+                // Перевіряємо, чи відповідь є JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Video test повернув не JSON:', text);
+                    showResult(streamResultDiv, `Video test повернув не JSON дані:\n${text}`, true);
+                    return;
+                }
+                
+                const data = await response.json();
+                showResult(streamResultDiv, data);
+                
+                console.log('Video test успішний:', data);
+                
+            } catch (error) {
+                console.error('Помилка video test:', error);
+                showResult(streamResultDiv, `Помилка video test: ${error.message}`, true);
+            }
+        }
     </script>
 </body>
 </html>
@@ -992,6 +1029,37 @@ def stream_test():
         print(f"Помилка в stream_test: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/test-video')
+def test_video():
+    """Тестовий endpoint для перевірки відео"""
+    try:
+        import requests
+        
+        # Тестове відео
+        video_url = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
+        
+        print(f"=== ТЕСТ ВІДЕО ===")
+        print(f"URL: {video_url}")
+        
+        # Перевіряємо доступність
+        response = requests.head(video_url, timeout=10)
+        print(f"Статус: {response.status_code}")
+        print(f"Content-Type: {response.headers.get('content-type')}")
+        print(f"Content-Length: {response.headers.get('content-length')}")
+        
+        return jsonify({
+            'status': 'success',
+            'video_url': video_url,
+            'response_status': response.status_code,
+            'content_type': response.headers.get('content-type'),
+            'content_length': response.headers.get('content-length'),
+            'headers': dict(response.headers)
+        })
+        
+    except Exception as e:
+        print(f"Помилка тесту відео: {e}")
+        return jsonify({'error': f'Помилка тесту відео: {str(e)}'}), 500
+
 @app.route('/api/video-proxy/<path:video_url>')
 def video_proxy(video_url):
     """Проксі для відео через наш сервер"""
@@ -1003,11 +1071,17 @@ def video_proxy(video_url):
         import urllib.parse
         video_url = urllib.parse.unquote(video_url)
         
-        print(f"Проксі відео: {video_url}")
+        print(f"=== ВІДЕО ПРОКСІ ВИКЛИКАНО ===")
+        print(f"Оригінальний URL: {video_url}")
+        print(f"Headers: {dict(request.headers)}")
         
         # Отримуємо відео з оригінального джерела
         response = requests.get(video_url, stream=True, timeout=30)
         response.raise_for_status()
+        
+        print(f"Відео отримано: {response.status_code}")
+        print(f"Content-Type: {response.headers.get('content-type')}")
+        print(f"Content-Length: {response.headers.get('content-length')}")
         
         # Повертаємо відео через наш сервер
         return Response(
@@ -1025,6 +1099,8 @@ def video_proxy(video_url):
         
     except Exception as e:
         print(f"Помилка проксі відео: {e}")
+        import traceback
+        print(traceback.format_exc())
         return jsonify({'error': f'Помилка проксі відео: {str(e)}'}), 500
 
 @app.route('/api/parse', methods=['POST'])
