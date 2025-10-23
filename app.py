@@ -39,8 +39,15 @@ HTML_TEMPLATE = """
     <meta property="og:description" content="Дивіться фільми та серіали разом з друзями">
     <meta property="og:type" content="website">
     
-    <!-- Дозволяємо завантаження з Discord -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https://discord.com https://*.discord.com https://*.discordsays.com https://*.railway.app http://*.railway.app; media-src 'self' data: blob: https://*.discordsays.com https://*.railway.app http://*.railway.app https://commondatastorage.googleapis.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://discord.com https://*.discord.com https://*.discordsays.com;">
+    <!-- ОНОВЛЕНИЙ CSP - дозволяє всі відео джерела -->
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: http:;
+        media-src * data: blob: https: http:;
+        img-src * data: blob: https: http:;
+        script-src 'self' 'unsafe-inline' 'unsafe-eval' https://discord.com https://*.discord.com https://*.discordsays.com;
+        connect-src * https: http: wss: ws:;
+        frame-src * https: http:;
+    ">
     
     <script>
         // Перевіряємо Discord SDK
@@ -1062,46 +1069,61 @@ def test_video():
 
 @app.route('/api/video-proxy/<path:video_url>')
 def video_proxy(video_url):
-    """Проксі для відео через наш сервер"""
     try:
         import requests
         from flask import Response
+        import urllib.parse
         
         # Декодуємо URL
-        import urllib.parse
         video_url = urllib.parse.unquote(video_url)
         
-        print(f"=== ВІДЕО ПРОКСІ ВИКЛИКАНО ===")
-        print(f"Оригінальний URL: {video_url}")
-        print(f"Headers: {dict(request.headers)}")
+        print(f"=== ВІДЕО ПРОКСІ ===")
+        print(f"URL: {video_url}")
         
-        # Отримуємо відео з оригінального джерела
-        response = requests.get(video_url, stream=True, timeout=30)
+        # ДОДАНІ ЗАГОЛОВКИ для обходу блокувань
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': 'https://hdrezka.ag/',
+            'Origin': 'https://hdrezka.ag',
+            'Accept': '*/*',
+            'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+            'Range': request.headers.get('Range', 'bytes=0-')
+        }
+        
+        # Отримуємо відео
+        response = requests.get(video_url, stream=True, timeout=30, headers=headers)
         response.raise_for_status()
         
-        print(f"Відео отримано: {response.status_code}")
+        print(f"Статус: {response.status_code}")
         print(f"Content-Type: {response.headers.get('content-type')}")
-        print(f"Content-Length: {response.headers.get('content-length')}")
         
-        # Повертаємо відео через наш сервер
+        # ОНОВЛЕНІ CORS заголовки
+        def generate():
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    yield chunk
+        
         return Response(
-            response.iter_content(chunk_size=8192),
+            generate(),
             mimetype=response.headers.get('content-type', 'video/mp4'),
             headers={
                 'Content-Length': response.headers.get('content-length', ''),
                 'Accept-Ranges': 'bytes',
                 'Cache-Control': 'public, max-age=3600',
                 'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type'
-            }
+                'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                'Access-Control-Allow-Headers': 'Range, Content-Type',
+                'Access-Control-Expose-Headers': 'Content-Length, Content-Range',
+                'Content-Range': response.headers.get('content-range', '')
+            },
+            status=response.status_code
         )
         
     except Exception as e:
-        print(f"Помилка проксі відео: {e}")
+        print(f"Помилка проксі: {e}")
         import traceback
         print(traceback.format_exc())
-        return jsonify({'error': f'Помилка проксі відео: {str(e)}'}), 500
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/parse', methods=['POST'])
 def parse_content():
@@ -1170,54 +1192,72 @@ def parse_content():
 @app.route('/api/stream', methods=['POST'])
 def get_stream():
     print("=== STREAM ENDPOINT ВИКЛИКАНО ===")
-    print(f"Method: {request.method}")
-    print(f"URL: {request.url}")
-    print(f"Headers: {dict(request.headers)}")
     
     try:
-        # Перевіряємо, чи запит містить JSON
         if not request.is_json:
-            print("Помилка: не JSON запит")
             return jsonify({'error': 'Запит повинен містити JSON дані'}), 400
             
         data = request.get_json()
-        if not data:
-            return jsonify({'error': 'Порожній JSON запит'}), 400
-            
         url = data.get('url')
         translation = data.get('translation')
         season = data.get('season')
         episode = data.get('episode')
         
-        print(f"Отримані дані: url={url}, translation={translation}, season={season}, episode={episode}")
-        
         if not url or not translation:
             return jsonify({'error': 'URL та переклад є обов\'язковими'}), 400
         
-        # Тимчасово повертаємо тестові дані через проксі
-        print("Повертаємо тестові дані через проксі")
-        
-        # Отримуємо базовий URL для проксі (завжди HTTPS)
-        base_url = request.url_root.rstrip('/')
-        if base_url.startswith('http://'):
-            base_url = base_url.replace('http://', 'https://')
-        
-        result = {
-            'videos': {
-                '720': f'{base_url}/api/video-proxy/https%3A//commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-                '1080': f'{base_url}/api/video-proxy/https%3A//commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4'
-            },
-            'season': season,
-            'episode': episode,
-            'test_mode': True,
-            'message': 'Тестовий режим - HdRezka тимчасово відключено'
-        }
-        
-        print(f"Повертаємо результат: {result}")
-        return jsonify(result)
+        # РЕАЛЬНИЙ ПАРСИНГ замість тестових даних
+        try:
+            rezka = HdRezkaApi(url)
+            stream = rezka.getStream(season=season, episode=episode, translation=translation)
+            
+            if not stream or not stream.videos:
+                return jsonify({'error': 'Не вдалося отримати відео'}), 500
+            
+            # Проксіруємо відео через наш сервер
+            import urllib.parse
+            base_url = request.url_root.rstrip('/')
+            if base_url.startswith('http://'):
+                base_url = base_url.replace('http://', 'https://')
+            
+            proxied_videos = {}
+            for quality, video_url in stream.videos.items():
+                # Кодуємо URL
+                encoded_url = urllib.parse.quote(video_url, safe='')
+                proxied_videos[quality] = f'{base_url}/api/video-proxy/{encoded_url}'
+            
+            result = {
+                'videos': proxied_videos,
+                'season': season,
+                'episode': episode
+            }
+            
+            print(f"Повертаємо відео: {list(proxied_videos.keys())}")
+            return jsonify(result)
+            
+        except Exception as parse_error:
+            print(f"Помилка парсингу HdRezka: {parse_error}")
+            
+            # Fallback до тестових відео якщо HdRezka не працює
+            base_url = request.url_root.rstrip('/')
+            if base_url.startswith('http://'):
+                base_url = base_url.replace('http://', 'https://')
+            
+            result = {
+                'videos': {
+                    '720': f'{base_url}/api/video-proxy/https%3A//commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
+                },
+                'season': season,
+                'episode': episode,
+                'test_mode': True,
+                'error': str(parse_error)
+            }
+            
+            return jsonify(result)
         
     except Exception as e:
-        print(f"Помилка при отриманні стріму: {str(e)}")
+        print(f"Загальна помилка: {e}")
+        import traceback
         print(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
