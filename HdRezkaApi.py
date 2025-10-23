@@ -232,6 +232,11 @@ class HdRezkaApi():
 
 	@staticmethod
 	def clearTrash(data):
+		print(f"=== clearTrash DEBUG ===")
+		print(f"Input data type: {type(data)}")
+		print(f"Input data length: {len(str(data)) if data else 0}")
+		print(f"Input data (перші 200 символів): {str(data)[:200] if data else 'None'}")
+		
 		# Додаємо перевірку типу
 		if not isinstance(data, str):
 			print(f"Warning: clearTrash received {type(data)}, expected str")
@@ -251,17 +256,30 @@ class HdRezkaApi():
 					trashcombo = base64.b64encode(data_bytes)
 					trashCodesSet.append(trashcombo)
 
+			print(f"Generated {len(trashCodesSet)} trash codes")
+			
 			arr = data.replace("#h", "").split("//_//")
+			print(f"Split into {len(arr)} parts")
 			trashString = ''.join(arr)
+			print(f"Trash string length: {len(trashString)}")
 
 			for i in trashCodesSet:
 				temp = i.decode("utf-8")
 				trashString = trashString.replace(temp, '')
 
+			print(f"After trash removal length: {len(trashString)}")
+			print(f"Trash string (перші 200 символів): {trashString[:200]}")
+
 			finalString = base64.b64decode(trashString+"==")
-			return finalString.decode("utf-8")
+			result = finalString.decode("utf-8")
+			print(f"Final result length: {len(result)}")
+			print(f"Final result (перші 200 символів): {result[:200]}")
+			
+			return result
 		except Exception as e:
-			print(f"Error in clearTrash: {e}")
+			print(f"❌ Error in clearTrash: {e}")
+			import traceback
+			print(traceback.format_exc())
 			return data
 
 	def getTranslations(self):
@@ -361,20 +379,48 @@ class HdRezkaApi():
 					'X-Requested-With': 'XMLHttpRequest',
 					'Referer': self.url
 				})
-				r = self.session.post("https://rezka.ag/ajax/get_cdn_series/", data=data, headers=ajax_headers, timeout=15)
-				r = r.json()
+				
+				print(f"=== makeRequest DEBUG ===")
+				print(f"Request data: {data}")
+				print(f"Request headers: {ajax_headers}")
+				
+				r = self.session.post("https://rezka.ag/ajax/get_cdn_series/", 
+									 data=data, 
+									 headers=ajax_headers, 
+									 timeout=15)
+				
+				print(f"Response status: {r.status_code}")
+				print(f"Response headers: {dict(r.headers)}")
+				
+				# ДОДАНО: Логування RAW відповіді
+				raw_response = r.text
+				print(f"Raw response (перші 500 символів): {raw_response[:500]}")
+				
+				r_json = r.json()
+				print(f"JSON response: {r_json}")
 
-				if r['success']:
-					# Перевіряємо, чи є url у відповіді
-					if 'url' not in r or not r['url']:
-						print("No URL in response")
+				if r_json['success']:
+					# ДОДАНО: Перевірка наявності URL
+					if 'url' not in r_json:
+						print("❌ Ключ 'url' відсутній в JSON відповіді")
+						print(f"Доступні ключі: {list(r_json.keys())}")
 						return None
 					
-					# Очищаємо URL від сміття
-					cleaned_url = self.clearTrash(r['url'])
-					if not cleaned_url:
-						print("Failed to clean URL")
+					if not r_json['url']:
+						print("❌ Поле 'url' порожнє")
 						return None
+					
+					print(f"✅ URL знайдено: {r_json['url'][:100]}...")
+					
+					# Очищаємо URL від сміття
+					cleaned_url = self.clearTrash(r_json['url'])
+					
+					if not cleaned_url:
+						print("❌ clearTrash повернув порожній результат")
+						print(f"Оригінальний URL: {r_json['url']}")
+						return None
+					
+					print(f"✅ Очищений URL: {cleaned_url[:100]}...")
 					
 					arr = cleaned_url.split(",")
 					stream = HdRezkaStream(season, episode)
@@ -385,16 +431,21 @@ class HdRezkaApi():
 								res = i.split("[")[1].split("]")[0]
 								video = i.split("[")[1].split("]")[1].split(" or ")[1]
 								stream.append(res, video)
+								print(f"✅ Додано якість {res}: {video[:50]}...")
 						except Exception as e:
-							print(f"Error parsing video quality: {e}")
+							print(f"⚠️ Помилка парсингу якості: {e}")
 							continue
 					
 					return stream
 				else:
-					print(f"Request failed: {r}")
+					print(f"❌ success = false")
+					print(f"Response: {r_json}")
 					return None
+					
 			except Exception as e:
-				print(f"Error in makeRequest: {e}")
+				print(f"❌ Exception в makeRequest: {e}")
+				import traceback
+				print(traceback.format_exc())
 				return None
 
 		def getStreamSeries(self, season, episode, translation_id):

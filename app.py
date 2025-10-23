@@ -39,15 +39,8 @@ HTML_TEMPLATE = """
     <meta property="og:description" content="Дивіться фільми та серіали разом з друзями">
     <meta property="og:type" content="website">
     
-    <!-- ОНОВЛЕНИЙ CSP - дозволяє всі відео джерела -->
-    <meta http-equiv="Content-Security-Policy" content="
-        default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: http:;
-        media-src * data: blob: https: http:;
-        img-src * data: blob: https: http:;
-        script-src 'self' 'unsafe-inline' 'unsafe-eval' https://discord.com https://*.discord.com https://*.discordsays.com;
-        connect-src * https: http: wss: ws:;
-        frame-src * https: http:;
-    ">
+    <!-- Найпростіший CSP для тестування -->
+    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; media-src * data: blob:; img-src * data: blob:;">
     
     <script>
         // Перевіряємо Discord SDK
@@ -248,6 +241,7 @@ HTML_TEMPLATE = """
         <button data-action="stream">🎬 Отримати стрім</button>
         <button data-action="stream-test" style="background: #E91E63; margin-left: 10px;">🧪 Тест стріму</button>
         <button data-action="test-video" style="background: #FF5722; margin-left: 10px;">🎥 Тест відео</button>
+        <button data-action="test-hdrezka" style="background: #9C27B0; margin-left: 10px;">🔍 Тест HdRezka</button>
         <div id="streamResult" class="result" style="display: none;"></div>
         
         <div id="videoContainer" style="display: none; margin-top: 20px;">
@@ -367,6 +361,9 @@ HTML_TEMPLATE = """
                                     break;
                                 case 'test-video':
                                     testVideo();
+                                    break;
+                                case 'test-hdrezka':
+                                    testHdRezka();
                                     break;
                                 default:
                                     console.log('Невідома дія:', dataAction);
@@ -926,6 +923,39 @@ HTML_TEMPLATE = """
                 showResult(streamResultDiv, `Помилка video test: ${error.message}`, true);
             }
         }
+        
+        // Функція для тестування HdRezka
+        async function testHdRezka() {
+            const streamResultDiv = document.getElementById('streamResult');
+            showLoading(streamResultDiv, 'Тестування HdRezka...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/test-hdrezka`, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                console.log('HdRezka test - статус:', response.status);
+                
+                // Перевіряємо, чи відповідь є JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('HdRezka test повернув не JSON:', text);
+                    showResult(streamResultDiv, `HdRezka test повернув не JSON дані:\n${text}`, true);
+                    return;
+                }
+                
+                const data = await response.json();
+                showResult(streamResultDiv, data);
+                
+                console.log('HdRezka test успішний:', data);
+                
+            } catch (error) {
+                console.error('Помилка HdRezka test:', error);
+                showResult(streamResultDiv, `Помилка HdRezka test: ${error.message}`, true);
+            }
+        }
     </script>
 </body>
 </html>
@@ -1067,63 +1097,96 @@ def test_video():
         print(f"Помилка тесту відео: {e}")
         return jsonify({'error': f'Помилка тесту відео: {str(e)}'}), 500
 
+@app.route('/api/test-hdrezka')
+def test_hdrezka():
+    """Тестовий endpoint для перевірки HdRezka парсингу"""
+    try:
+        from HdRezkaApi import HdRezkaApi
+        
+        # Тестовий URL
+        test_url = 'https://rezka.ag/films/comedy/79188-chumovaya-pyatnica-2-2025-latest.html'
+        
+        print(f"=== ТЕСТ HDREZKA ===")
+        print(f"URL: {test_url}")
+        
+        # Створюємо об'єкт HdRezkaApi
+        rezka = HdRezkaApi(test_url)
+        
+        # Отримуємо переклади
+        print("Отримуємо переклади...")
+        translations = rezka.getTranslations()
+        print(f"Переклади: {translations}")
+        
+        # Отримуємо сезони
+        print("Отримуємо сезони...")
+        seasons = rezka.getSeasons()
+        print(f"Сезони: {seasons}")
+        
+        # Спробуємо отримати стрім
+        print("Спробуємо отримати стрім...")
+        stream = rezka.getStream(season='1', episode='1', translation='1')
+        
+        result = {
+            'status': 'success',
+            'url': test_url,
+            'translations': translations,
+            'seasons': seasons,
+            'stream_success': stream is not None,
+            'stream_videos': stream.videos if stream else None,
+            'message': 'HdRezka тест завершено'
+        }
+        
+        print(f"Результат: {result}")
+        return jsonify(result)
+        
+    except Exception as e:
+        print(f"Помилка тесту HdRezka: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({'error': f'Помилка тесту HdRezka: {str(e)}'}), 500
+
 @app.route('/api/video-proxy/<path:video_url>')
 def video_proxy(video_url):
+    """Проксі для відео через наш сервер"""
     try:
         import requests
         from flask import Response
-        import urllib.parse
         
         # Декодуємо URL
+        import urllib.parse
         video_url = urllib.parse.unquote(video_url)
         
-        print(f"=== ВІДЕО ПРОКСІ ===")
-        print(f"URL: {video_url}")
+        print(f"=== ВІДЕО ПРОКСІ ВИКЛИКАНО ===")
+        print(f"Оригінальний URL: {video_url}")
+        print(f"Headers: {dict(request.headers)}")
         
-        # ДОДАНІ ЗАГОЛОВКИ для обходу блокувань
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Referer': 'https://hdrezka.ag/',
-            'Origin': 'https://hdrezka.ag',
-            'Accept': '*/*',
-            'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
-            'Range': request.headers.get('Range', 'bytes=0-')
-        }
-        
-        # Отримуємо відео
-        response = requests.get(video_url, stream=True, timeout=30, headers=headers)
+        # Отримуємо відео з оригінального джерела
+        response = requests.get(video_url, stream=True, timeout=30)
         response.raise_for_status()
         
-        print(f"Статус: {response.status_code}")
+        print(f"Відео отримано: {response.status_code}")
         print(f"Content-Type: {response.headers.get('content-type')}")
+        print(f"Content-Length: {response.headers.get('content-length')}")
         
-        # ОНОВЛЕНІ CORS заголовки
-        def generate():
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    yield chunk
-        
+        # Повертаємо відео через наш сервер
         return Response(
-            generate(),
+            response.iter_content(chunk_size=8192),
             mimetype=response.headers.get('content-type', 'video/mp4'),
             headers={
                 'Content-Length': response.headers.get('content-length', ''),
                 'Accept-Ranges': 'bytes',
                 'Cache-Control': 'public, max-age=3600',
                 'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-                'Access-Control-Allow-Headers': 'Range, Content-Type',
-                'Access-Control-Expose-Headers': 'Content-Length, Content-Range',
-                'Content-Range': response.headers.get('content-range', '')
-            },
-            status=response.status_code
+                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type'
+            }
         )
         
     except Exception as e:
-        print(f"Помилка проксі: {e}")
+        print(f"Помилка проксі відео: {e}")
         import traceback
         print(traceback.format_exc())
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'Помилка проксі відео: {str(e)}'}), 500
 
 @app.route('/api/parse', methods=['POST'])
 def parse_content():
@@ -1192,27 +1255,39 @@ def parse_content():
 @app.route('/api/stream', methods=['POST'])
 def get_stream():
     print("=== STREAM ENDPOINT ВИКЛИКАНО ===")
+    print(f"Method: {request.method}")
+    print(f"URL: {request.url}")
+    print(f"Headers: {dict(request.headers)}")
     
     try:
+        # Перевіряємо, чи запит містить JSON
         if not request.is_json:
+            print("Помилка: не JSON запит")
             return jsonify({'error': 'Запит повинен містити JSON дані'}), 400
             
         data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Порожній JSON запит'}), 400
+            
         url = data.get('url')
         translation = data.get('translation')
         season = data.get('season')
         episode = data.get('episode')
         
+        print(f"Отримані дані: url={url}, translation={translation}, season={season}, episode={episode}")
+        
         if not url or not translation:
             return jsonify({'error': 'URL та переклад є обов\'язковими'}), 400
         
-        # РЕАЛЬНИЙ ПАРСИНГ замість тестових даних
+        # РЕАЛЬНИЙ ПАРСИНГ HdRezka
         try:
+            print("Спробуємо парсити HdRezka...")
             rezka = HdRezkaApi(url)
             stream = rezka.getStream(season=season, episode=episode, translation=translation)
             
             if not stream or not stream.videos:
-                return jsonify({'error': 'Не вдалося отримати відео'}), 500
+                print("HdRezka не повернув відео, використовуємо тестові дані")
+                raise Exception("HdRezka не повернув відео")
             
             # Проксіруємо відео через наш сервер
             import urllib.parse
@@ -1229,14 +1304,15 @@ def get_stream():
             result = {
                 'videos': proxied_videos,
                 'season': season,
-                'episode': episode
+                'episode': episode,
+                'hdrezka_mode': True
             }
             
-            print(f"Повертаємо відео: {list(proxied_videos.keys())}")
+            print(f"✅ HdRezka успішно: {list(proxied_videos.keys())}")
             return jsonify(result)
             
         except Exception as parse_error:
-            print(f"Помилка парсингу HdRezka: {parse_error}")
+            print(f"❌ HdRezka помилка: {parse_error}")
             
             # Fallback до тестових відео якщо HdRezka не працює
             base_url = request.url_root.rstrip('/')
@@ -1245,19 +1321,21 @@ def get_stream():
             
             result = {
                 'videos': {
-                    '720': f'{base_url}/api/video-proxy/https%3A//commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
+                    '720': f'{base_url}/api/video-proxy/https%3A//commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+                    '1080': f'{base_url}/api/video-proxy/https%3A//commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4'
                 },
                 'season': season,
                 'episode': episode,
                 'test_mode': True,
-                'error': str(parse_error)
+                'hdrezka_error': str(parse_error),
+                'message': 'HdRezka не працює - використовуємо тестові відео'
             }
             
+            print(f"Повертаємо тестові дані: {result}")
             return jsonify(result)
         
     except Exception as e:
-        print(f"Загальна помилка: {e}")
-        import traceback
+        print(f"Помилка при отриманні стріму: {str(e)}")
         print(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
