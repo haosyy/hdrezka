@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit, join_room, leave_room
 import json
 import traceback
 import os
@@ -20,6 +21,9 @@ CORS(app, origins=[
     "https://*.discordapp.com"
 ])
 
+# SocketIO для синхронізації
+socketio = SocketIO(app, cors_allowed_origins="*")
+
 # Простий кеш в пам'яті. Для продакшену краще використовувати Redis або Memcached.
 # Ключ - URL, значення - словник з даними та часом збереження.
 CACHE = {}
@@ -28,6 +32,9 @@ CACHE_TIMEOUT_SECONDS = 3600 # 1 година
 # Watch Together система
 WATCH_ROOMS = {}  # Кімнати для синхронізації
 ROOM_TIMEOUT = 3600  # 1 година без активності
+
+# SocketIO кімнати
+SOCKET_ROOMS = {}  # Кімнати для SocketIO синхронізації
 
 # HTML шаблон (вбудований в код)
 HTML_TEMPLATE = """
@@ -269,7 +276,8 @@ HTML_TEMPLATE = """
             </p>
             <button data-action="create-room" style="background: #5865F2; margin-right: 10px;">🏠 Створити кімнату</button>
             <button data-action="join-room" style="background: #57F287; margin-right: 10px;">🚪 Приєднатися</button>
-            <button data-action="list-rooms" style="background: #FEE75C; color: #000;">📋 Список кімнат</button>
+            <button data-action="list-rooms" style="background: #FEE75C; color: #000; margin-right: 10px;">📋 Список кімнат</button>
+            <a href="/controller" target="_blank" style="background: #FF6B6B; color: white; text-decoration: none; padding: 15px 30px; border-radius: 5px; display: inline-block; margin: 5px;">🎮 Контролер</a>
         </div>
         <div id="streamResult" class="result" style="display: none;"></div>
         
@@ -1420,9 +1428,578 @@ HTML_TEMPLATE = """
 </html>
 """
 
+# ===== HTML ДЛЯ DISCORD ACTIVITY (КОНТРОЛЕР) =====
+CONTROLLER_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Watch Together - Controller</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            font-size: 2em;
+            margin-bottom: 30px;
+        }
+        .status {
+            background: rgba(255,255,255,0.1);
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .controls {
+            background: rgba(255,255,255,0.1);
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            margin: 5px;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        button:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        button.pause {
+            background: #ff9800;
+        }
+        button.pause:hover {
+            background: #e68900;
+        }
+        .video-input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border: none;
+            font-size: 14px;
+        }
+        .player-link {
+            background: rgba(76, 175, 80, 0.2);
+            border: 2px solid #4CAF50;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .player-link a {
+            color: #4CAF50;
+            font-size: 1.2em;
+            font-weight: bold;
+            text-decoration: none;
+        }
+        .users {
+            background: rgba(255,255,255,0.1);
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+        .user {
+            display: inline-block;
+            background: rgba(255,255,255,0.2);
+            padding: 5px 10px;
+            margin: 5px;
+            border-radius: 15px;
+        }
+        .seek-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .seek-input {
+            flex: 1;
+            padding: 10px;
+            border-radius: 5px;
+            border: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 Watch Together</h1>
+        
+        <div class="status">
+            <h3>📊 Статус</h3>
+            <div id="roomInfo">Підключення...</div>
+            <div id="videoInfo">Відео не вибрано</div>
+        </div>
+
+        <div class="player-link">
+            <h3>🎥 Відкрийте плеєр</h3>
+            <a href="#" id="playerLink" target="_blank">
+                Відкрити відео плеєр в новому вікні →
+            </a>
+            <p style="color: rgba(255,255,255,0.7); margin-top: 10px;">
+                Відео буде відтворюватись в окремому вікні, а тут ви зможете керувати ним
+            </p>
+        </div>
+
+        <div class="controls">
+            <h3>🎮 Керування</h3>
+            
+            <div>
+                <input type="text" 
+                       id="videoUrl" 
+                       class="video-input" 
+                       placeholder="Вставте URL з HdRezka...">
+                <button onclick="parseVideo()">📥 Парсити відео</button>
+            </div>
+
+            <div id="translationControls" style="display: none; margin-top: 15px;">
+                <select id="translationSelect" class="video-input"></select>
+                <div id="seasonEpisode" style="display: none;">
+                    <select id="seasonSelect" class="video-input"></select>
+                    <select id="episodeSelect" class="video-input"></select>
+                </div>
+                <button onclick="loadVideo()">▶️ Завантажити відео</button>
+            </div>
+
+            <div id="playbackControls" style="display: none; margin-top: 15px;">
+                <button onclick="sendPlay()">▶️ Play</button>
+                <button class="pause" onclick="sendPause()">⏸️ Pause</button>
+                
+                <div class="seek-controls">
+                    <input type="number" 
+                           id="seekTime" 
+                           class="seek-input" 
+                           placeholder="Час (секунди)" 
+                           min="0">
+                    <button onclick="sendSeek()">⏩ Перемотати</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="users">
+            <h3>👥 Користувачі в кімнаті (<span id="userCount">0</span>)</h3>
+            <div id="userList"></div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const roomId = 'room_' + Math.random().toString(36).substr(2, 9);
+        let currentVideoData = null;
+        let parsedContent = null;
+
+        // Підключення до кімнати
+        socket.on('connect', () => {
+            console.log('✅ Підключено до сервера');
+            socket.emit('join_room', { room: roomId });
+            
+            // Оновлюємо посилання на плеєр
+            const playerUrl = window.location.origin + '/player.html?room=' + roomId;
+            document.getElementById('playerLink').href = playerUrl;
+        });
+
+        socket.on('room_joined', (data) => {
+            console.log('✅ Приєднано до кімнати:', data);
+            document.getElementById('roomInfo').innerHTML = 
+                '🏠 Кімната: <strong>' + roomId + '</strong><br>' +
+                '👥 Учасників: <strong>' + data.user_count + '</strong>';
+        });
+
+        socket.on('user_joined', (data) => {
+            console.log('👤 Користувач приєднався:', data);
+            updateUsers(data.users);
+        });
+
+        socket.on('user_left', (data) => {
+            console.log('👋 Користувач вийшов:', data);
+            updateUsers(data.users);
+        });
+
+        function updateUsers(users) {
+            const count = users.length;
+            document.getElementById('userCount').textContent = count;
+            
+            const userList = document.getElementById('userList');
+            userList.innerHTML = users.map(user => 
+                '<span class="user">👤 Користувач #' + user.substr(-4) + '</span>'
+            ).join('');
+        }
+
+        // Парсинг відео
+        async function parseVideo() {
+            const url = document.getElementById('videoUrl').value;
+            if (!url) {
+                alert('Введіть URL!');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/parse', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+
+                const data = await response.json();
+                console.log('Парсинг результат:', data);
+                
+                parsedContent = data;
+                
+                // Показуємо вибір перекладу
+                const translationSelect = document.getElementById('translationSelect');
+                translationSelect.innerHTML = '';
+                
+                for (const [name, id] of Object.entries(data.translations)) {
+                    const option = document.createElement('option');
+                    option.value = id;
+                    option.textContent = name;
+                    translationSelect.appendChild(option);
+                }
+                
+                // Показуємо сезони якщо серіал
+                if (data.type === 'video.tv_series' && data.seasons) {
+                    document.getElementById('seasonEpisode').style.display = 'block';
+                    fillSeasons(data);
+                }
+                
+                document.getElementById('translationControls').style.display = 'block';
+                
+            } catch (error) {
+                alert('Помилка парсингу: ' + error.message);
+            }
+        }
+
+        function fillSeasons(data) {
+            const translationId = document.getElementById('translationSelect').value;
+            const translatorName = Object.keys(data.translations)
+                .find(key => data.translations[key] === translationId);
+            
+            if (!translatorName || !data.seasons || !data.seasons[translatorName]) return;
+            
+            const seasons = data.seasons[translatorName].seasons;
+            const seasonSelect = document.getElementById('seasonSelect');
+            
+            seasonSelect.innerHTML = '';
+            for (const [id, name] of Object.entries(seasons)) {
+                const option = document.createElement('option');
+                option.value = id;
+                option.textContent = name;
+                seasonSelect.appendChild(option);
+            }
+            
+            fillEpisodes(data);
+        }
+
+        function fillEpisodes(data) {
+            const translationId = document.getElementById('translationSelect').value;
+            const seasonId = document.getElementById('seasonSelect').value;
+            
+            const translatorName = Object.keys(data.translations)
+                .find(key => data.translations[key] === translationId);
+            
+            if (!translatorName || !data.seasons || !data.seasons[translatorName]) return;
+            
+            const episodes = data.seasons[translatorName].episodes[seasonId];
+            const episodeSelect = document.getElementById('episodeSelect');
+            
+            episodeSelect.innerHTML = '';
+            for (const [id, name] of Object.entries(episodes)) {
+                const option = document.createElement('option');
+                option.value = id;
+                option.textContent = name;
+                episodeSelect.appendChild(option);
+            }
+        }
+
+        // Завантаження відео
+        async function loadVideo() {
+            const url = document.getElementById('videoUrl').value;
+            const translation = document.getElementById('translationSelect').value;
+            
+            let season = null;
+            let episode = null;
+            
+            if (parsedContent && parsedContent.type === 'video.tv_series') {
+                season = document.getElementById('seasonSelect').value;
+                episode = document.getElementById('episodeSelect').value;
+            }
+
+            try {
+                const response = await fetch('/api/stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url, translation, season, episode })
+                });
+
+                const data = await response.json();
+                console.log('Stream результат:', data);
+                
+                currentVideoData = data;
+                
+                // Надсилаємо всім в кімнаті
+                socket.emit('load_video', {
+                    room: roomId,
+                    videoData: data
+                });
+                
+                document.getElementById('videoInfo').innerHTML = 
+                    '🎬 Відео завантажено<br>' +
+                    'Якостей: <strong>' + Object.keys(data.videos).length + '</strong>';
+                
+                document.getElementById('playbackControls').style.display = 'block';
+                
+            } catch (error) {
+                alert('Помилка завантаження: ' + error.message);
+            }
+        }
+
+        // Керування відтворенням
+        function sendPlay() {
+            socket.emit('control', {
+                room: roomId,
+                action: 'play'
+            });
+        }
+
+        function sendPause() {
+            socket.emit('control', {
+                room: roomId,
+                action: 'pause'
+            });
+        }
+
+        function sendSeek() {
+            const time = parseFloat(document.getElementById('seekTime').value);
+            if (isNaN(time)) {
+                alert('Введіть коректний час!');
+                return;
+            }
+            
+            socket.emit('control', {
+                room: roomId,
+                action: 'seek',
+                time: time
+            });
+        }
+    </script>
+</body>
+</html>
+"""
+
+# ===== HTML ДЛЯ ВІДЕО ПЛЕЄРА (ОКРЕМЕ ВІКНО) =====
+PLAYER_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Watch Together - Player</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #videoContainer {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        video {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        #status {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-family: Arial, sans-serif;
+        }
+        #quality {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: Arial, sans-serif;
+        }
+        select {
+            background: rgba(255,255,255,0.1);
+            color: white;
+            border: none;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        #message {
+            color: white;
+            font-size: 1.5em;
+            text-align: center;
+            padding: 40px;
+        }
+    </style>
+</head>
+<body>
+    <div id="status">Підключення...</div>
+    <div id="quality" style="display: none;">
+        Якість: 
+        <select id="qualitySelect" onchange="changeQuality()"></select>
+    </div>
+    
+    <div id="videoContainer">
+        <div id="message">Очікування відео від ведучого...</div>
+        <video id="videoPlayer" controls style="display: none;"></video>
+    </div>
+
+    <script>
+        const socket = io();
+        const urlParams = new URLSearchParams(window.location.search);
+        const roomId = urlParams.get('room');
+        
+        const videoPlayer = document.getElementById('videoPlayer');
+        const message = document.getElementById('message');
+        const qualitySelect = document.getElementById('qualitySelect');
+        
+        let currentVideoData = null;
+        let isControlledSeek = false;
+
+        if (!roomId) {
+            message.textContent = '❌ Не вказано кімнату!';
+        } else {
+            socket.on('connect', () => {
+                console.log('✅ Підключено');
+                socket.emit('join_room', { room: roomId });
+                document.getElementById('status').textContent = '✅ Підключено';
+            });
+
+            socket.on('load_video', (data) => {
+                console.log('📥 Отримано відео:', data);
+                currentVideoData = data.videoData;
+                
+                // Заповнюємо якості
+                qualitySelect.innerHTML = '';
+                const qualities = Object.keys(data.videoData.videos).sort((a, b) => {
+                    return parseInt(b) - parseInt(a);
+                });
+                
+                qualities.forEach(q => {
+                    const option = document.createElement('option');
+                    option.value = q;
+                    option.textContent = q;
+                    qualitySelect.appendChild(option);
+                });
+                
+                // Завантажуємо кращу якість
+                const bestQuality = qualities[0];
+                loadQuality(bestQuality);
+                
+                document.getElementById('quality').style.display = 'block';
+                message.style.display = 'none';
+                videoPlayer.style.display = 'block';
+            });
+
+            socket.on('control', (data) => {
+                console.log('🎮 Команда:', data);
+                
+                if (data.action === 'play') {
+                    videoPlayer.play();
+                } else if (data.action === 'pause') {
+                    videoPlayer.pause();
+                } else if (data.action === 'seek') {
+                    isControlledSeek = true;
+                    videoPlayer.currentTime = data.time;
+                    setTimeout(() => { isControlledSeek = false; }, 100);
+                }
+            });
+        }
+
+        function loadQuality(quality) {
+            if (!currentVideoData) return;
+            
+            const videoUrl = currentVideoData.videos[quality];
+            const currentTime = videoPlayer.currentTime;
+            const wasPaused = videoPlayer.paused;
+            
+            videoPlayer.src = videoUrl;
+            videoPlayer.load();
+            
+            videoPlayer.onloadedmetadata = () => {
+                videoPlayer.currentTime = currentTime;
+                if (!wasPaused) {
+                    videoPlayer.play();
+                }
+            };
+            
+            qualitySelect.value = quality;
+        }
+
+        function changeQuality() {
+            const quality = qualitySelect.value;
+            loadQuality(quality);
+        }
+
+        // Відключаємо локальне керування
+        videoPlayer.onplay = (e) => {
+            if (!isControlledSeek) {
+                videoPlayer.pause();
+            }
+        };
+
+        videoPlayer.onpause = (e) => {
+            if (!isControlledSeek) {
+                // Дозволяємо паузу
+            }
+        };
+    </script>
+</body>
+</html>
+"""
+
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
+
+@app.route('/controller')
+def controller():
+    """Discord Activity контролер"""
+    return render_template_string(CONTROLLER_TEMPLATE)
+
+@app.route('/player.html')
+def player():
+    """Окремий відео плеєр"""
+    return render_template_string(PLAYER_TEMPLATE)
 
 @app.route('/manifest.json')
 def manifest():
@@ -2160,6 +2737,58 @@ def get_stream():
         print(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
+# ===== SOCKETIO EVENTS =====
+
+@socketio.on('join_room')
+def handle_join(data):
+    room = data['room']
+    join_room(room)
+    
+    if room not in SOCKET_ROOMS:
+        SOCKET_ROOMS[room] = {
+            'users': [],
+            'video': None
+        }
+    
+    SOCKET_ROOMS[room]['users'].append(request.sid)
+    
+    emit('room_joined', {
+        'room': room,
+        'user_count': len(SOCKET_ROOMS[room]['users'])
+    }, room=request.sid)
+    
+    emit('user_joined', {
+        'user': request.sid,
+        'users': SOCKET_ROOMS[room]['users']
+    }, room=room)
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    for room, data in SOCKET_ROOMS.items():
+        if request.sid in data['users']:
+            data['users'].remove(request.sid)
+            
+            emit('user_left', {
+                'user': request.sid,
+                'users': data['users']
+            }, room=room)
+            
+            break
+
+@socketio.on('load_video')
+def handle_load_video(data):
+    room = data['room']
+    
+    if room in SOCKET_ROOMS:
+        SOCKET_ROOMS[room]['video'] = data['videoData']
+    
+    emit('load_video', data, room=room, include_self=False)
+
+@socketio.on('control')
+def handle_control(data):
+    room = data['room']
+    emit('control', data, room=room, include_self=False)
+
 if __name__ == '__main__':
     import os
     
@@ -2181,4 +2810,4 @@ if __name__ == '__main__':
         logger.error(f"Помилка імпорту: {e}")
         sys.exit(1)
     
-    app.run(debug=False, host='0.0.0.0', port=port)
+    socketio.run(app, debug=False, host='0.0.0.0', port=port)
