@@ -980,6 +980,43 @@ def video_proxy(video_url):
         print(f"Помилка проксі відео: {e}")
         return jsonify({'error': f'Помилка проксі відео: {str(e)}'}), 500
 
+@app.route('/api/video-to-data', methods=['POST'])
+def video_to_data():
+    """Конвертує відео URL в data URL"""
+    try:
+        import requests
+        import base64
+        
+        data = request.get_json()
+        video_url = data.get('url')
+        
+        if not video_url:
+            return jsonify({'error': 'URL відео не надано'}), 400
+        
+        print(f"Конвертуємо відео в data URL: {video_url}")
+        
+        # Отримуємо відео
+        response = requests.get(video_url, timeout=30)
+        response.raise_for_status()
+        
+        # Конвертуємо в base64
+        video_data = base64.b64encode(response.content).decode('utf-8')
+        
+        # Створюємо data URL
+        content_type = response.headers.get('content-type', 'video/mp4')
+        data_url = f'data:{content_type};base64,{video_data}'
+        
+        return jsonify({
+            'status': 'success',
+            'data_url': data_url,
+            'size': len(response.content),
+            'content_type': content_type
+        })
+        
+    except Exception as e:
+        print(f"Помилка конвертації відео: {e}")
+        return jsonify({'error': f'Помилка конвертації відео: {str(e)}'}), 500
+
 @app.route('/api/parse', methods=['POST'])
 def parse_content():
     try:
@@ -1071,16 +1108,14 @@ def get_stream():
         if not url or not translation:
             return jsonify({'error': 'URL та переклад є обов\'язковими'}), 400
         
-        # Тимчасово повертаємо тестові дані через проксі
-        print("Повертаємо тестові дані через проксі")
+        # Тимчасово повертаємо тестові дані як data URLs
+        print("Повертаємо тестові дані як data URLs")
         
-        # Отримуємо базовий URL для проксі
-        base_url = request.url_root.rstrip('/')
-        
+        # Створюємо мінімальні data URLs для тестування
         result = {
             'videos': {
-                '720': f'{base_url}/api/video-proxy/https%3A//commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-                '1080': f'{base_url}/api/video-proxy/https%3A//commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4'
+                '720': 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAAs1tZGF0AAACrgYF//+q3EXpvebZSLeWLNgg2SPu73gyNjQgLSBjb3JlIDE2MSByMzA4MSBkY2FhY2UxIC0gSC4yNjQvTVBFRy00IEFWQyBjb2RlYyAtIENvcHlsZWZ0IDIwMDMtMjAyMSAtIGh0dHA6Ly93d3cudmlkZW9sYW4ub3JnL3gyNjQuaHRtbCAtIG9wdGlvbnM6IGNhYmFjPTEgcmVmPTMgZGVibG9jaz0xOjA6MCBhbmFseXNlPTB4MzoweDExMyBtZT1oZXggc3VibWU9NyBwc3k9MSBwc3lfcmQ9MS4wMDowLjAwIG1peGVkX3JlZj0xIG1lX3JhbmdlPTE2IGNocm9tYV9tZT0xIHRyZWxsaXM9MSA4eDhkY3Q9MSBjcW09MCBkZWFkem9uZT0yMSwxMSBmYXN0X3Bza2lwPTEgY2hyb21hX3FwX29mZnNldD0tMiB0bHQ9OSBub3JmYWxfaWQ9MSBhdXRvPTEgZ2VvbV9hdXRvPTEgaWQ9MSB0aXRsZT0x',
+                '1080': 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAAs1tZGF0AAACrgYF//+q3EXpvebZSLeWLNgg2SPu73gyNjQgLSBjb3JlIDE2MSByMzA4MSBkY2FhY2UxIC0gSC4yNjQvTVBFRy00IEFWQyBjb2RlYyAtIENvcHlsZWZ0IDIwMDMtMjAyMSAtIGh0dHA6Ly93d3cudmlkZW9sYW4ub3JnL3gyNjQuaHRtbCAtIG9wdGlvbnM6IGNhYmFjPTEgcmVmPTMgZGVibG9jaz0xOjA6MCBhbmFseXNlPTB4MzoweDExMyBtZT1oZXggc3VibWU9NyBwc3k9MSBwc3lfcmQ9MS4wMDowLjAwIG1peGVkX3JlZj0xIG1lX3JhbmdlPTE2IGNocm9tYV9tZT0xIHRyZWxsaXM9MSA4eDhkY3Q9MSBjcW09MCBkZWFkem9uZT0yMSwxMSBmYXN0X3Bza2lwPTEgY2hyb21hX3FwX29mZnNldD0tMiB0bHQ9OSBub3JmYWxfaWQ9MSBhdXRvPTEgZ2VvbV9hdXRvPTEgaWQ9MSB0aXRsZT0x'
             },
             'season': season,
             'episode': episode,
