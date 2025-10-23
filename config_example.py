@@ -2,13 +2,13 @@
 # Скопіюйте цей файл в config.py та заповніть ваші дані
 
 # Discord Application Client ID
-DISCORD_CLIENT_ID = "1427061847483351245"
+DISCORD_CLIENT_ID = "848279368462499851"
 
 # URL вашого сайту (для Discord OAuth)
-SITE_URL = "https://your-domain.com"
+SITE_URL = "https://hdrezka.onrender.com"
 
 # Опціонально: секретний ключ для безпеки
-SECRET_KEY = "your_secret_key_here"
+SECRET_KEY = "pCnS6W6B2rcL15MUyJIr7sNrY7ckixwX"
 
 # Налаштування для розробки
 DEBUG = True

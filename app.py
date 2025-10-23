@@ -124,6 +124,7 @@ HTML_TEMPLATE = """
 
         <button onclick="parseContent()">📥 Парсити контент</button>
         <button onclick="testAPI()" style="background: #2196F3; margin-left: 10px;">🧪 Тест API</button>
+        <button onclick="testDomains()" style="background: #FF9800; margin-left: 10px;">🌐 Тест доменів</button>
         <div id="parseResult" class="result" style="display: none;"></div>
     </div>
 
@@ -530,6 +531,52 @@ HTML_TEMPLATE = """
                 console.error('Помилка тесту API:', error);
                 showResult(parseResultDiv, `Помилка тесту API: ${error.message}`, true);
             }
+        }
+        
+        // Функція для тестування доменів HdRezka
+        async function testDomains() {
+            const parseResultDiv = document.getElementById('parseResult');
+            showLoading(parseResultDiv, 'Тестування доменів HdRezka...');
+            
+            const domains = [
+                'https://rezka.ag',
+                'https://hdrezka.ag', 
+                'https://hdrezka.me',
+                'https://hdrezka.ua'
+            ];
+            
+            const results = [];
+            
+            for (const domain of domains) {
+                try {
+                    console.log(`Тестуємо домен: ${domain}`);
+                    const response = await fetch(domain, {
+                        method: 'HEAD',
+                        mode: 'no-cors',
+                        timeout: 5000
+                    });
+                    
+                    results.push({
+                        domain: domain,
+                        status: 'success',
+                        message: 'Доступний'
+                    });
+                    
+                } catch (error) {
+                    console.log(`Домен ${domain} недоступний:`, error);
+                    results.push({
+                        domain: domain,
+                        status: 'error',
+                        message: error.message
+                    });
+                }
+            }
+            
+            showResult(parseResultDiv, {
+                message: 'Результати тестування доменів',
+                results: results,
+                timestamp: new Date().toISOString()
+            });
         }
     </script>
 </body>

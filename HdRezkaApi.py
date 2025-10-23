@@ -47,7 +47,16 @@ class HdRezkaApi():
 		}
 		
 		self.session.headers.update(self.HEADERS)
-		self.url = url.split(".html")[0] + ".html"
+		
+		# Список альтернативних доменів
+		self.domains = [
+			'https://rezka.ag',
+			'https://hdrezka.ag',
+			'https://hdrezka.me',
+			'https://hdrezka.ua'
+		]
+		
+		self.url = self.normalize_url(url)
 		self.page = self.getPage()
 		self.page.raise_for_status() # Перевірка на HTTP помилки (4xx, 5xx)
 		self.soup = self.getSoup()
@@ -55,6 +64,38 @@ class HdRezkaApi():
 		# Перевіряємо, чи не заблокувала нас сторінка (наприклад, Cloudflare)
 		if not self.soup.find(id="post_id"):
 			raise ValueError("Не вдалося знайти 'post_id'. Можливо, доступ заблоковано або URL невірний.")
+
+		# Ліниве завантаження властивостей
+		self._id = None
+		self._name = None
+		self._type = None
+
+		#other
+		self.translators = None
+		self.seriesInfo = None
+	
+	def normalize_url(self, url):
+		"""Нормалізує URL та пробує різні домени"""
+		# Витягуємо шлях з URL
+		path = url.split(".html")[0] + ".html"
+		
+		# Якщо URL вже містить домен, використовуємо його
+		if url.startswith('http'):
+			return path
+		
+		# Інакше пробуємо різні домени
+		for domain in self.domains:
+			full_url = domain + path.replace('https://rezka.ag', '').replace('https://hdrezka.ag', '').replace('https://hdrezka.me', '').replace('https://hdrezka.ua', '')
+			try:
+				test_response = requests.head(full_url, timeout=5, headers=self.HEADERS)
+				if test_response.status_code == 200:
+					print(f"Знайдено робочий домен: {domain}")
+					return full_url
+			except:
+				continue
+		
+		# Якщо жоден домен не працює, використовуємо перший
+		return self.domains[0] + path.replace('https://rezka.ag', '').replace('https://hdrezka.ag', '').replace('https://hdrezka.me', '').replace('https://hdrezka.ua', '')
 
 		# Ліниве завантаження властивостей
 		self._id = None
@@ -85,23 +126,45 @@ class HdRezkaApi():
 
 	def getPage(self):
 		# Додаємо затримку та повторні спроби
-		max_retries = 3
+		max_retries = 5
 		
 		for attempt in range(max_retries):
 			try:
+				# Спочатку пробуємо головну сторінку
+				main_url = "https://rezka.ag/"
+				print(f"Спроба {attempt + 1}: отримуємо головну сторінку для cookies")
+				main_response = self.session.get(main_url, timeout=10)
+				
+				# Тепер пробуємо наш URL
 				response = self.session.get(self.url, timeout=15)
 				
-				# Якщо отримали 403, пробуємо інший User-Agent
+				# Якщо отримали 403, пробуємо різні методи
 				if response.status_code == 403:
-					print(f"Спроба {attempt + 1}: отримано 403, змінюємо User-Agent")
-					# Пробуємо різні User-Agent
+					print(f"Спроба {attempt + 1}: отримано 403, застосовуємо обхід")
+					
+					# Різні User-Agent
 					user_agents = [
 						'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
 						'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-						'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0'
+						'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
+						'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+						'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1'
 					]
+					
+					# Змінюємо User-Agent
 					self.session.headers.update({'User-Agent': user_agents[attempt % len(user_agents)]})
-					time.sleep(2)  # Затримка перед повторною спробою
+					
+					# Додаємо додаткові заголовки
+					self.session.headers.update({
+						'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+						'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8,uk;q=0.7',
+						'Accept-Encoding': 'gzip, deflate, br',
+						'DNT': '1',
+						'Connection': 'keep-alive',
+						'Upgrade-Insecure-Requests': '1',
+					})
+					
+					time.sleep(3 + attempt)  # Збільшуємо затримку з кожною спробою
 					continue
 				
 				return response
@@ -109,7 +172,7 @@ class HdRezkaApi():
 			except requests.exceptions.RequestException as e:
 				print(f"Спроба {attempt + 1}: помилка запиту - {e}")
 				if attempt < max_retries - 1:
-					time.sleep(3)  # Затримка перед повторною спробою
+					time.sleep(5 + attempt)  # Збільшуємо затримку
 					continue
 				else:
 					raise e
