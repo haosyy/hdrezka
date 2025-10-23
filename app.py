@@ -174,6 +174,7 @@ HTML_TEMPLATE = """
         <button onclick="testAPI()" data-action="test" style="background: #2196F3; margin-left: 10px;">🧪 Тест API</button>
         <button onclick="testDomains()" data-action="domains" style="background: #FF9800; margin-left: 10px;">🌐 Тест доменів</button>
         <button onclick="debugInfo()" data-action="debug" style="background: #9C27B0; margin-left: 10px;">🔍 Debug</button>
+        <button onclick="listRoutes()" data-action="routes" style="background: #607D8B; margin-left: 10px;">🛣️ Маршрути</button>
         <div id="parseResult" class="result" style="display: none;"></div>
     </div>
 
@@ -198,6 +199,7 @@ HTML_TEMPLATE = """
         </div>
 
         <button onclick="getStream()" data-action="stream">🎬 Отримати стрім</button>
+        <button onclick="testStream()" data-action="stream-test" style="background: #E91E63; margin-left: 10px;">🧪 Тест стріму</button>
         <div id="streamResult" class="result" style="display: none;"></div>
         
         <div id="videoContainer" style="display: none; margin-top: 20px;">
@@ -304,6 +306,12 @@ HTML_TEMPLATE = """
                                     break;
                                 case 'debug':
                                     debugInfo();
+                                    break;
+                                case 'routes':
+                                    listRoutes();
+                                    break;
+                                case 'stream-test':
+                                    testStream();
                                     break;
                                 default:
                                     console.log('Невідома дія:', dataAction);
@@ -756,6 +764,80 @@ HTML_TEMPLATE = """
                 showResult(parseResultDiv, `Помилка debug: ${error.message}`, true);
             }
         }
+        
+        // Функція для перевірки маршрутів
+        async function listRoutes() {
+            const parseResultDiv = document.getElementById('parseResult');
+            showLoading(parseResultDiv, 'Отримання списку маршрутів...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/routes`, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                console.log('Routes - статус:', response.status);
+                
+                // Перевіряємо, чи відповідь є JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Routes повернув не JSON:', text);
+                    showResult(parseResultDiv, `Routes повернув не JSON дані:\n${text}`, true);
+                    return;
+                }
+                
+                const data = await response.json();
+                showResult(parseResultDiv, data);
+                
+                console.log('Routes успішний:', data);
+                
+            } catch (error) {
+                console.error('Помилка routes:', error);
+                showResult(parseResultDiv, `Помилка routes: ${error.message}`, true);
+            }
+        }
+        
+        // Функція для тестування стріму
+        async function testStream() {
+            const streamResultDiv = document.getElementById('streamResult');
+            showLoading(streamResultDiv, 'Тестування стріму...');
+            
+            try {
+                const testData = {
+                    url: 'https://example.com/test',
+                    translation: '1',
+                    season: '1',
+                    episode: '1'
+                };
+                
+                const response = await fetch(`${API_BASE}/stream-test`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(testData)
+                });
+                
+                console.log('Stream test - статус:', response.status);
+                
+                // Перевіряємо, чи відповідь є JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Stream test повернув не JSON:', text);
+                    showResult(streamResultDiv, `Stream test повернув не JSON дані:\n${text}`, true);
+                    return;
+                }
+                
+                const data = await response.json();
+                showResult(streamResultDiv, data);
+                
+                console.log('Stream test успішний:', data);
+                
+            } catch (error) {
+                console.error('Помилка stream test:', error);
+                showResult(streamResultDiv, `Помилка stream test: ${error.message}`, true);
+            }
+        }
     </script>
 </body>
 </html>
@@ -825,6 +907,47 @@ def debug_info():
         }
     })
 
+@app.route('/api/routes', methods=['GET'])
+def list_routes():
+    """Показує всі доступні маршрути"""
+    routes = []
+    for rule in app.url_map.iter_rules():
+        routes.append({
+            'endpoint': rule.endpoint,
+            'methods': list(rule.methods),
+            'rule': str(rule)
+        })
+    
+    return jsonify({
+        'status': 'success',
+        'message': 'Доступні маршрути',
+        'routes': routes,
+        'total': len(routes)
+    })
+
+@app.route('/api/stream-test', methods=['POST'])
+def stream_test():
+    """Тестовий endpoint для стріму"""
+    print("=== STREAM TEST ENDPOINT ВИКЛИКАНО ===")
+    try:
+        data = request.get_json()
+        print(f"Отримані дані: {data}")
+        
+        # Повертаємо тестові дані
+        return jsonify({
+            'status': 'success',
+            'message': 'Stream test працює!',
+            'received_data': data,
+            'test_videos': {
+                '720': 'https://example.com/video720.mp4',
+                '1080': 'https://example.com/video1080.mp4'
+            },
+            'timestamp': time()
+        })
+    except Exception as e:
+        print(f"Помилка в stream_test: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/parse', methods=['POST'])
 def parse_content():
     try:
@@ -891,9 +1014,15 @@ def parse_content():
 
 @app.route('/api/stream', methods=['POST'])
 def get_stream():
+    print("=== STREAM ENDPOINT ВИКЛИКАНО ===")
+    print(f"Method: {request.method}")
+    print(f"URL: {request.url}")
+    print(f"Headers: {dict(request.headers)}")
+    
     try:
         # Перевіряємо, чи запит містить JSON
         if not request.is_json:
+            print("Помилка: не JSON запит")
             return jsonify({'error': 'Запит повинен містити JSON дані'}), 400
             
         data = request.get_json()
