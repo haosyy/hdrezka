@@ -170,10 +170,10 @@ HTML_TEMPLATE = """
         
         async function initializeDiscordSDK() {
             try {
-                discordSDK = new DiscordSDK('1427061847483351245'); // Замініть на ваш Client ID
+                discordSDK = new DiscordSDK('848279368462499851'); // Замініть на ваш Client ID
                 
                 const { code } = await discordSDK.commands.authorize({
-                    client_id: '1427061847483351245', // Замініть на ваш Client ID
+                    client_id: '848279368462499851', // Замініть на ваш Client ID
                     response_type: 'code',
                     state: '',
                     prompt: 'none',
