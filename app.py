@@ -1143,21 +1143,26 @@ def parse_content():
             return jsonify(cached_item['data'])
 
         print(f"Кеш не знайдено або застарів. Виконую парсинг для URL: {url}")
-        # Створюємо екземпляр API
-        rezka = HdRezkaApi(url)
         
-        # Отримуємо базову інформацію
-        # Використовуємо rezka.id, rezka.name, rezka.type, щоб спрацювали @property
+        # Тимчасово повертаємо тестові дані замість HdRezka
+        print("Повертаємо тестові дані замість HdRezka")
         result = {
-            'name': rezka.name,
-            'type': rezka.type,
-            'id': rezka.id,
-            'translations': rezka.getTranslations()
+            'name': 'Тестовий фільм',
+            'type': 'video.tv_series',
+            'id': 'test123',
+            'translations': {
+                'Українська': '1',
+                'Російська': '2',
+                'Англійська': '3'
+            },
+            'seasons': {
+                '1': {
+                    '1': 'Серія 1',
+                    '2': 'Серія 2',
+                    '3': 'Серія 3'
+                }
+            }
         }
-        
-        # Якщо це серіал, отримуємо сезони та епізоди
-        if rezka.type == 'video.tv_series':
-            result['seasons'] = rezka.getSeasons()
         
         # Зберігаємо результат в кеш
         CACHE[url] = {
