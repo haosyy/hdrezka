@@ -255,6 +255,7 @@ HTML_TEMPLATE = """
         <button data-action="test-video" style="background: #FF5722; margin-left: 10px;">🎥 Тест відео</button>
         <button data-action="test-hdrezka" style="background: #9C27B0; margin-left: 10px;">🔍 Тест HdRezka</button>
         <button data-action="test-direct" style="background: #4CAF50; margin-left: 10px;">🚀 Прямі відео</button>
+        <button data-action="test-blob" style="background: #FF9800; margin-left: 10px;">💾 Тест Blob</button>
         <div id="streamResult" class="result" style="display: none;"></div>
         
         <div id="videoContainer" style="display: none; margin-top: 20px;">
@@ -384,6 +385,9 @@ HTML_TEMPLATE = """
                                     break;
                                 case 'test-direct':
                                     testDirect();
+                                    break;
+                                case 'test-blob':
+                                    testBlob();
                                     break;
                                 default:
                                     console.log('Невідома дія:', dataAction);
@@ -655,110 +659,124 @@ HTML_TEMPLATE = """
                 console.log(`Встановлюємо відео якості ${bestQuality}`);
                 console.log(`URL: ${videos[bestQuality]}`);
                 
-                // ВАЖЛИВО: Встановлюємо crossorigin
-                videoPlayer.setAttribute('crossorigin', 'anonymous');
+                // ВАЖЛИВО: Завантажуємо відео та створюємо Blob URL
+                loadVideoAsBlob(videos[bestQuality], bestQuality);
+            }
+            
+            videoContainerDiv.style.display = 'block';
+            console.log('✅ Відео контейнер показано');
+        }
+        
+        // НОВА функція для завантаження відео як Blob
+        async function loadVideoAsBlob(videoUrl, quality) {
+            try {
+                console.log(`🔄 Завантаження відео як Blob: ${videoUrl}`);
                 
-                // Встановлюємо джерело
-                videoPlayer.src = videos[bestQuality];
+                // Показуємо індикатор завантаження
+                videoInfoDiv.innerHTML = '⏳ Завантаження відео...';
                 
-                // Детальні обробники помилок
+                // Завантажуємо відео
+                const response = await fetch(videoUrl);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                console.log('✅ Відповідь отримано');
+                console.log('Content-Type:', response.headers.get('content-type'));
+                console.log('Content-Length:', response.headers.get('content-length'));
+                
+                // Отримуємо як blob з прогресом
+                const contentLength = response.headers.get('content-length');
+                const total = parseInt(contentLength, 10);
+                let loaded = 0;
+                
+                const reader = response.body.getReader();
+                const chunks = [];
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    
+                    if (done) break;
+                    
+                    chunks.push(value);
+                    loaded += value.length;
+                    
+                    // Оновлюємо прогрес
+                    if (total) {
+                        const percent = ((loaded / total) * 100).toFixed(1);
+                        videoInfoDiv.innerHTML = `⏳ Завантажено: ${percent}% (${(loaded / 1024 / 1024).toFixed(1)} MB / ${(total / 1024 / 1024).toFixed(1)} MB)`;
+                    } else {
+                        videoInfoDiv.innerHTML = `⏳ Завантажено: ${(loaded / 1024 / 1024).toFixed(1)} MB`;
+                    }
+                }
+                
+                console.log('✅ Відео повністю завантажено');
+                
+                // Створюємо Blob
+                const blob = new Blob(chunks, { type: 'video/mp4' });
+                const blobUrl = URL.createObjectURL(blob);
+                
+                console.log('✅ Blob URL створено:', blobUrl);
+                
+                // Встановлюємо Blob URL для відео
+                videoPlayer.src = blobUrl;
+                
+                // Зберігаємо Blob URL для очищення пізніше
+                if (window.currentBlobUrl) {
+                    URL.revokeObjectURL(window.currentBlobUrl);
+                }
+                window.currentBlobUrl = blobUrl;
+                
+                // Обробники подій
                 videoPlayer.onerror = function(e) {
-                    console.error('❌ ПОМИЛКА ВІДЕО:');
-                    console.error('Event:', e);
+                    console.error('❌ ПОМИЛКА ВІДЕО:', e);
                     console.error('Error code:', videoPlayer.error?.code);
                     console.error('Error message:', videoPlayer.error?.message);
-                    console.error('Network state:', videoPlayer.networkState);
-                    console.error('Ready state:', videoPlayer.readyState);
-                    console.error('Current src:', videoPlayer.currentSrc);
-                    
-                    // Показуємо помилку користувачу
-                    const errorMessages = {
-                        1: 'MEDIA_ERR_ABORTED - Завантаження скасовано',
-                        2: 'MEDIA_ERR_NETWORK - Помилка мережі',
-                        3: 'MEDIA_ERR_DECODE - Помилка декодування',
-                        4: 'MEDIA_ERR_SRC_NOT_SUPPORTED - Формат не підтримується'
-                    };
-                    
-                    const errorMsg = videoPlayer.error ? 
-                        errorMessages[videoPlayer.error.code] : 
-                        'Невідома помилка';
                     
                     videoInfoDiv.innerHTML = `
                         <span style="color: red; font-weight: bold;">
-                            ❌ Помилка: ${errorMsg}
+                            ❌ Помилка відтворення відео
                             <br>Код: ${videoPlayer.error?.code}
-                            <br>Перевірте консоль (F12) для деталей
                         </span>
                     `;
-                };
-                
-                videoPlayer.onloadstart = function() {
-                    console.log('⏳ Почалось завантаження відео...');
                 };
                 
                 videoPlayer.onloadedmetadata = function() {
                     console.log('✅ Метадані завантажено');
                     console.log('Duration:', videoPlayer.duration);
-                    console.log('Video dimensions:', videoPlayer.videoWidth, 'x', videoPlayer.videoHeight);
-                };
-                
-                videoPlayer.onloadeddata = function() {
-                    console.log('✅ Дані завантажено, можна відтворювати');
+                    updateVideoInfo(quality, videoUrl);
                 };
                 
                 videoPlayer.oncanplay = function() {
                     console.log('✅ Відео готове до відтворення');
                 };
                 
-                videoPlayer.oncanplaythrough = function() {
-                    console.log('✅ Відео може відтворюватись без пауз');
-                };
-                
-                videoPlayer.onprogress = function() {
-                    if (videoPlayer.buffered.length > 0) {
-                        const bufferedEnd = videoPlayer.buffered.end(videoPlayer.buffered.length - 1);
-                        const duration = videoPlayer.duration;
-                        const percentLoaded = (bufferedEnd / duration) * 100;
-                        console.log(`📊 Завантажено: ${percentLoaded.toFixed(1)}%`);
-                    }
-                };
-                
-                videoPlayer.onstalled = function() {
-                    console.warn('⚠️ Завантаження застопорилось');
-                };
-                
-                videoPlayer.onsuspend = function() {
-                    console.log('⏸️ Завантаження призупинено');
-                };
-                
-                // Завантажуємо відео
-                console.log('Викликаємо videoPlayer.load()...');
                 videoPlayer.load();
                 
-                updateVideoInfo(bestQuality, videos[bestQuality]);
+            } catch (error) {
+                console.error('❌ Помилка завантаження Blob:', error);
+                videoInfoDiv.innerHTML = `
+                    <span style="color: red; font-weight: bold;">
+                        ❌ Помилка завантаження: ${error.message}
+                    </span>
+                `;
             }
-            
-            videoContainerDiv.style.display = 'block';
-            console.log('✅ Відео контейнер показано');
         }
 
         function changeVideoQuality() {
             const selectedQuality = qualitySelect.value;
             
             if (currentStreamData && currentStreamData.videos[selectedQuality]) {
-                console.log(`Змінюємо якість на ${selectedQuality}`);
-                console.log(`URL: ${currentStreamData.videos[selectedQuality]}`);
-                
                 const currentTime = videoPlayer.currentTime;
                 
-                // ВАЖЛИВО: Встановлюємо crossorigin
-                videoPlayer.setAttribute('crossorigin', 'anonymous');
-                
-                videoPlayer.src = currentStreamData.videos[selectedQuality];
-                videoPlayer.load();
+                // Завантажуємо нову якість як Blob
+                loadVideoAsBlob(currentStreamData.videos[selectedQuality], selectedQuality)
+                    .then(() => {
+                        // Відновлюємо позицію
                 videoPlayer.currentTime = currentTime;
                 videoPlayer.play();
-                updateVideoInfo(selectedQuality, currentStreamData.videos[selectedQuality]);
+                    });
             }
         }
 
@@ -1102,6 +1120,47 @@ HTML_TEMPLATE = """
                 showResult(streamResultDiv, `Помилка Direct test: ${error.message}`, true);
             }
         }
+        
+        // Функція для тестування Blob
+        async function testBlob() {
+            const streamResultDiv = document.getElementById('streamResult');
+            showLoading(streamResultDiv, 'Тестування Blob...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/test-blob`, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                console.log('Blob test - статус:', response.status);
+                
+                // Перевіряємо, чи відповідь є JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Blob test повернув не JSON:', text);
+                    showResult(streamResultDiv, `Blob test повернув не JSON дані:\n${text}`, true);
+                    return;
+                }
+                
+                const data = await response.json();
+                showResult(streamResultDiv, data);
+                
+                console.log('Blob test успішний:', data);
+                
+            } catch (error) {
+                console.error('Помилка Blob test:', error);
+                showResult(streamResultDiv, `Помилка Blob test: ${error.message}`, true);
+            }
+        }
+        
+        // Очищення Blob URLs при закритті
+        window.addEventListener('beforeunload', function() {
+            if (window.currentBlobUrl) {
+                URL.revokeObjectURL(window.currentBlobUrl);
+                console.log('🧹 Blob URL очищено');
+            }
+        });
     </script>
 </body>
 </html>
@@ -1357,6 +1416,47 @@ def test_direct():
         import traceback
         print(traceback.format_exc())
         return jsonify({'error': f'Помилка тесту прямих відео: {str(e)}'}), 500
+
+@app.route('/api/test-blob')
+def test_blob():
+    """Тестовий endpoint для Blob завантаження"""
+    try:
+        print("=== ТЕСТ BLOB ЗАВАНТАЖЕННЯ ===")
+        
+        # Отримуємо базовий URL
+        base_url = request.url_root.rstrip('/')
+        if base_url.startswith('http://'):
+            base_url = base_url.replace('http://', 'https://')
+        
+        # Тестове відео через проксі
+        test_video_url = f'{base_url}/api/video-proxy/https%3A//commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
+        
+        result = {
+            'status': 'success',
+            'message': 'Blob тест готовий - натисніть "🎬 Отримати стрім" для тестування',
+            'test_video_url': test_video_url,
+            'instructions': [
+                '1. Натисніть "🎬 Отримати стрім"',
+                '2. Відео завантажиться як Blob',
+                '3. Перевірте консоль для логів',
+                '4. Відео має працювати в Discord Activities!'
+            ],
+            'blob_benefits': [
+                '✅ Обходить Discord CSP обмеження',
+                '✅ Відео завантажується на клієнті',
+                '✅ Створює blob: URL для відтворення',
+                '✅ Працює з будь-якими зовнішніми джерелами'
+            ]
+        }
+        
+        print(f"Результат: {result}")
+        return jsonify(result)
+        
+    except Exception as e:
+        print(f"Помилка тесту Blob: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({'error': f'Помилка тесту Blob: {str(e)}'}), 500
 
 @app.route('/api/video-proxy/<path:video_url>')
 def video_proxy(video_url):
