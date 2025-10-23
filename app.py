@@ -40,7 +40,7 @@ HTML_TEMPLATE = """
     <meta property="og:type" content="website">
     
     <!-- Дозволяємо завантаження з Discord -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https://discord.com https://*.discord.com https://*.discordsays.com https://*.railway.app; media-src 'self' data: blob: https://*.discordsays.com https://*.railway.app https://commondatastorage.googleapis.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://discord.com https://*.discord.com;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https://discord.com https://*.discord.com https://*.discordsays.com https://*.railway.app http://*.railway.app; media-src 'self' data: blob: https://*.discordsays.com https://*.railway.app http://*.railway.app https://commondatastorage.googleapis.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://discord.com https://*.discord.com;">
     
     <script>
         // Завантажуємо Discord SDK динамічно
@@ -1004,7 +1004,10 @@ def video_proxy(video_url):
             headers={
                 'Content-Length': response.headers.get('content-length', ''),
                 'Accept-Ranges': 'bytes',
-                'Cache-Control': 'public, max-age=3600'
+                'Cache-Control': 'public, max-age=3600',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type'
             }
         )
         
@@ -1106,8 +1109,10 @@ def get_stream():
         # Тимчасово повертаємо тестові дані через проксі
         print("Повертаємо тестові дані через проксі")
         
-        # Отримуємо базовий URL для проксі
+        # Отримуємо базовий URL для проксі (завжди HTTPS)
         base_url = request.url_root.rstrip('/')
+        if base_url.startswith('http://'):
+            base_url = base_url.replace('http://', 'https://')
         
         result = {
             'videos': {
