@@ -29,11 +29,44 @@ CACHE_TIMEOUT_SECONDS = 3600 # 1 година
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="uk">
-<head>
+    <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HdRezka API Test</title>
-    <script src="https://discord.com/api/activities/sdk.js"></script>
+    
+    <!-- Discord Activities мета-теги -->
+    <meta property="og:title" content="HdRezka - Спільний перегляд">
+    <meta property="og:description" content="Дивіться фільми та серіали разом з друзями">
+    <meta property="og:type" content="website">
+    
+    <!-- Дозволяємо завантаження з Discord -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https://discord.com https://*.discord.com https://*.discordsays.com https://*.railway.app; media-src 'self' data: blob: https://*.discordsays.com https://*.railway.app https://commondatastorage.googleapis.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://discord.com https://*.discord.com;">
+    
+    <script>
+        // Завантажуємо Discord SDK динамічно
+        function loadDiscordSDK() {
+            return new Promise((resolve, reject) => {
+                // Перевіряємо, чи вже завантажений
+                if (typeof DiscordSDK !== 'undefined') {
+                    console.log('Discord SDK вже завантажений');
+                    resolve();
+                    return;
+                }
+                
+                const script = document.createElement('script');
+                script.src = 'https://discord.com/api/activities/sdk.js';
+                script.onload = () => {
+                    console.log('Discord SDK завантажено успішно');
+                    resolve();
+                };
+                script.onerror = (error) => {
+                    console.log('Discord SDK не завантажено - працюємо локально');
+                    reject(new Error('Discord SDK не завантажено'));
+                };
+                document.head.appendChild(script);
+            });
+        }
+    </script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -164,10 +197,6 @@ HTML_TEMPLATE = """
             <span id="modeText">🔄 Перевірка режиму роботи...</span>
         </div>
         
-        <div id="participants" style="margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 5px; display: none;">
-            <h4>👥 Учасники:</h4>
-        </div>
-        
         <div class="form-group">
             <label for="url">URL сайту:</label>
             <input type="url" id="url" placeholder="https://hdrezka.ag/..." 
@@ -212,10 +241,7 @@ HTML_TEMPLATE = """
                 <label for="qualitySelect">Якість відео:</label>
                 <select id="qualitySelect" onchange="changeVideoQuality()"></select>
             </div>
-            <video id="videoPlayer" controls style="width: 100%; max-width: 800px; height: auto;" 
-                   onplay="broadcastCommand('PLAY_VIDEO', { time: this.currentTime })"
-                   onpause="broadcastCommand('PAUSE_VIDEO', { time: this.currentTime })"
-                   onseeked="broadcastCommand('SEEK_VIDEO', { time: this.currentTime })">
+            <video id="videoPlayer" controls style="width: 100%; max-width: 800px; height: auto;">
                 Ваш браузер не підтримує відео
             </video>
             <div id="videoInfo" style="margin-top: 10px; font-size: 14px; color: #666;"></div>
@@ -230,16 +256,15 @@ HTML_TEMPLATE = """
             const modeIndicator = document.getElementById('modeIndicator');
             const modeText = document.getElementById('modeText');
             
-            // Перевіряємо, чи доступний DiscordSDK
-            if (typeof DiscordSDK === 'undefined') {
-                console.log('Discord SDK не завантажений - працюємо як звичайний сайт');
-                modeIndicator.style.background = '#fff3e0';
-                modeIndicator.style.borderColor = '#ff9800';
-                modeText.innerHTML = '🌐 Локальний режим - працюємо як звичайний сайт';
-                return;
-            }
-            
             try {
+                // Спробуємо завантажити Discord SDK
+                await loadDiscordSDK();
+                
+                // Перевіряємо, чи доступний DiscordSDK
+                if (typeof DiscordSDK === 'undefined') {
+                    throw new Error('Discord SDK не доступний');
+                }
+                
                 discordSDK = new DiscordSDK('1382172131051307038');
                 
                 const { code } = await discordSDK.commands.authorize({
@@ -257,102 +282,12 @@ HTML_TEMPLATE = """
                 modeIndicator.style.borderColor = '#4caf50';
                 modeText.innerHTML = '🎮 Discord Activities режим - працюємо в Discord!';
                 
-                // Налаштовуємо спільний перегляд
-                setupSharedViewing();
-                
             } catch (error) {
-                console.log('Discord SDK не доступний (запуск поза Discord):', error.message);
+                console.log('Discord SDK не доступний (запуск поза Discord):', error?.message || error);
                 
                 modeIndicator.style.background = '#fff3e0';
                 modeIndicator.style.borderColor = '#ff9800';
                 modeText.innerHTML = '🌐 Локальний режим - працюємо як звичайний сайт';
-            }
-        }
-        
-        // Налаштування спільного перегляду
-        function setupSharedViewing() {
-            if (!discordSDK) return;
-            
-            // Слухаємо зміни в активності
-            discordSDK.subscribe('ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE', (participants) => {
-                console.log('Учасники активності:', participants);
-                updateParticipantsList(participants);
-            });
-            
-            // Слухаємо команди від інших учасників
-            discordSDK.subscribe('ACTIVITY_INSTANCE_COMMAND', (command) => {
-                console.log('Отримано команду:', command);
-                handleSharedCommand(command);
-            });
-        }
-        
-        // Оновлення списку учасників
-        function updateParticipantsList(participants) {
-            const participantsDiv = document.getElementById('participants');
-            if (!participantsDiv) return;
-            
-            participantsDiv.innerHTML = '<h4>👥 Учасники:</h4>';
-            participants.forEach(participant => {
-                const div = document.createElement('div');
-                div.textContent = participant.username || participant.id;
-                div.style.margin = '5px 0';
-                participantsDiv.appendChild(div);
-            });
-        }
-        
-        // Обробка спільних команд
-        function handleSharedCommand(command) {
-            switch (command.type) {
-                case 'PLAY_VIDEO':
-                    if (command.data && command.data.videoUrl) {
-                        playVideo(command.data.videoUrl);
-                    }
-                    break;
-                case 'PAUSE_VIDEO':
-                    pauseVideo();
-                    break;
-                case 'SEEK_VIDEO':
-                    if (command.data && command.data.time) {
-                        seekVideo(command.data.time);
-                    }
-                    break;
-            }
-        }
-        
-        // Відправка команди всім учасникам
-        async function broadcastCommand(type, data = {}) {
-            if (!discordSDK) return;
-            
-            try {
-                await discordSDK.commands.broadcast({
-                    type: type,
-                    data: data
-                });
-            } catch (error) {
-                console.error('Помилка відправки команди:', error);
-            }
-        }
-        
-        // Функції для спільного перегляду
-        function playVideo(videoUrl) {
-            const video = document.getElementById('videoPlayer');
-            if (video && videoUrl) {
-                video.src = videoUrl;
-                video.play();
-            }
-        }
-        
-        function pauseVideo() {
-            const video = document.getElementById('videoPlayer');
-            if (video) {
-                video.pause();
-            }
-        }
-        
-        function seekVideo(time) {
-            const video = document.getElementById('videoPlayer');
-            if (video) {
-                video.currentTime = time;
             }
         }
         
@@ -691,12 +626,6 @@ HTML_TEMPLATE = """
                 videoPlayer.currentTime = currentTime;
                 videoPlayer.play();
                 updateVideoInfo(selectedQuality, currentStreamData.videos[selectedQuality]);
-                
-                // Відправляємо команду всім учасникам
-                broadcastCommand('PLAY_VIDEO', { 
-                    videoUrl: currentStreamData.videos[selectedQuality],
-                    time: currentTime
-                });
             }
         }
 
@@ -1083,43 +1012,6 @@ def video_proxy(video_url):
         print(f"Помилка проксі відео: {e}")
         return jsonify({'error': f'Помилка проксі відео: {str(e)}'}), 500
 
-@app.route('/api/video-to-data', methods=['POST'])
-def video_to_data():
-    """Конвертує відео URL в data URL"""
-    try:
-        import requests
-        import base64
-        
-        data = request.get_json()
-        video_url = data.get('url')
-        
-        if not video_url:
-            return jsonify({'error': 'URL відео не надано'}), 400
-        
-        print(f"Конвертуємо відео в data URL: {video_url}")
-        
-        # Отримуємо відео
-        response = requests.get(video_url, timeout=30)
-        response.raise_for_status()
-        
-        # Конвертуємо в base64
-        video_data = base64.b64encode(response.content).decode('utf-8')
-        
-        # Створюємо data URL
-        content_type = response.headers.get('content-type', 'video/mp4')
-        data_url = f'data:{content_type};base64,{video_data}'
-        
-        return jsonify({
-            'status': 'success',
-            'data_url': data_url,
-            'size': len(response.content),
-            'content_type': content_type
-        })
-        
-    except Exception as e:
-        print(f"Помилка конвертації відео: {e}")
-        return jsonify({'error': f'Помилка конвертації відео: {str(e)}'}), 500
-
 @app.route('/api/parse', methods=['POST'])
 def parse_content():
     try:
@@ -1211,20 +1103,21 @@ def get_stream():
         if not url or not translation:
             return jsonify({'error': 'URL та переклад є обов\'язковими'}), 400
         
-        # Створюємо екземпляр API
-        rezka = HdRezkaApi(url)
+        # Тимчасово повертаємо тестові дані через проксі
+        print("Повертаємо тестові дані через проксі")
         
-        # Отримуємо стрім
-        stream = rezka.getStream(season, episode, translation)
-        
-        # Перевіряємо, чи отримали ми дані
-        if not stream or not hasattr(stream, 'videos'):
-            return jsonify({'error': 'Не вдалося отримати стрім'}), 404
+        # Отримуємо базовий URL для проксі
+        base_url = request.url_root.rstrip('/')
         
         result = {
-            'videos': stream.videos,
-            'season': stream.season,
-            'episode': stream.episode
+            'videos': {
+                '720': f'{base_url}/api/video-proxy/https%3A//commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+                '1080': f'{base_url}/api/video-proxy/https%3A//commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4'
+            },
+            'season': season,
+            'episode': episode,
+            'test_mode': True,
+            'message': 'Тестовий режим - HdRezka тимчасово відключено'
         }
         
         print(f"Повертаємо результат: {result}")
