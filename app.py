@@ -39,8 +39,8 @@ HTML_TEMPLATE = """
     <meta property="og:description" content="Дивіться фільми та серіали разом з друзями">
     <meta property="og:type" content="website">
     
-    <!-- Найпростіший CSP для тестування -->
-    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; media-src * data: blob:; img-src * data: blob:;">
+    <!-- Найпростіший CSP для тестування - дозволяє ВСЕ -->
+    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; media-src * data: blob:; img-src * data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src *; frame-src *;">
     
     <script>
         // Перевіряємо Discord SDK
@@ -242,6 +242,7 @@ HTML_TEMPLATE = """
         <button data-action="stream-test" style="background: #E91E63; margin-left: 10px;">🧪 Тест стріму</button>
         <button data-action="test-video" style="background: #FF5722; margin-left: 10px;">🎥 Тест відео</button>
         <button data-action="test-hdrezka" style="background: #9C27B0; margin-left: 10px;">🔍 Тест HdRezka</button>
+        <button data-action="test-direct" style="background: #4CAF50; margin-left: 10px;">🚀 Прямі відео</button>
         <div id="streamResult" class="result" style="display: none;"></div>
         
         <div id="videoContainer" style="display: none; margin-top: 20px;">
@@ -364,6 +365,9 @@ HTML_TEMPLATE = """
                                     break;
                                 case 'test-hdrezka':
                                     testHdRezka();
+                                    break;
+                                case 'test-direct':
+                                    testDirect();
                                     break;
                                 default:
                                     console.log('Невідома дія:', dataAction);
@@ -956,6 +960,39 @@ HTML_TEMPLATE = """
                 showResult(streamResultDiv, `Помилка HdRezka test: ${error.message}`, true);
             }
         }
+        
+        // Функція для тестування прямих відео
+        async function testDirect() {
+            const streamResultDiv = document.getElementById('streamResult');
+            showLoading(streamResultDiv, 'Тестування прямих відео...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/test-direct`, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                console.log('Direct test - статус:', response.status);
+                
+                // Перевіряємо, чи відповідь є JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Direct test повернув не JSON:', text);
+                    showResult(streamResultDiv, `Direct test повернув не JSON дані:\n${text}`, true);
+                    return;
+                }
+                
+                const data = await response.json();
+                showResult(streamResultDiv, data);
+                
+                console.log('Direct test успішний:', data);
+                
+            } catch (error) {
+                console.error('Помилка Direct test:', error);
+                showResult(streamResultDiv, `Помилка Direct test: ${error.message}`, true);
+            }
+        }
     </script>
 </body>
 </html>
@@ -1051,14 +1088,15 @@ def stream_test():
         data = request.get_json()
         print(f"Отримані дані: {data}")
         
-        # Повертаємо тестові дані
+        # ПРЯМІ посилання - БЕЗ проксі
         return jsonify({
             'status': 'success',
-            'message': 'Stream test працює!',
+            'message': 'Stream test працює! (прямі посилання)',
             'received_data': data,
             'test_videos': {
-                '720': 'https://example.com/video720.mp4',
-                '1080': 'https://example.com/video1080.mp4'
+                '360p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+                '720p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
+                '1080p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4'
             },
             'timestamp': time()
         })
@@ -1144,6 +1182,60 @@ def test_hdrezka():
         import traceback
         print(traceback.format_exc())
         return jsonify({'error': f'Помилка тесту HdRezka: {str(e)}'}), 500
+
+@app.route('/api/test-direct')
+def test_direct():
+    """Тестовий endpoint для прямих відео без проксі"""
+    try:
+        print("=== ТЕСТ ПРЯМИХ ВІДЕО ===")
+        
+        # Прямі посилання на Google відео
+        direct_videos = {
+            '360p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+            '720p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
+            '1080p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4'
+        }
+        
+        # Тестуємо доступність кожного відео
+        import requests
+        results = {}
+        
+        for quality, url in direct_videos.items():
+            try:
+                print(f"Тестуємо {quality}: {url}")
+                response = requests.head(url, timeout=10)
+                results[quality] = {
+                    'url': url,
+                    'status': response.status_code,
+                    'content_type': response.headers.get('content-type'),
+                    'content_length': response.headers.get('content-length'),
+                    'accessible': response.status_code == 200
+                }
+                print(f"✅ {quality}: {response.status_code}")
+            except Exception as e:
+                results[quality] = {
+                    'url': url,
+                    'error': str(e),
+                    'accessible': False
+                }
+                print(f"❌ {quality}: {e}")
+        
+        result = {
+            'status': 'success',
+            'message': 'Тест прямих відео завершено',
+            'videos': results,
+            'total_accessible': sum(1 for v in results.values() if v.get('accessible', False)),
+            'total_videos': len(results)
+        }
+        
+        print(f"Результат: {result}")
+        return jsonify(result)
+        
+    except Exception as e:
+        print(f"Помилка тесту прямих відео: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({'error': f'Помилка тесту прямих відео: {str(e)}'}), 500
 
 @app.route('/api/video-proxy/<path:video_url>')
 def video_proxy(video_url):
@@ -1279,60 +1371,24 @@ def get_stream():
         if not url or not translation:
             return jsonify({'error': 'URL та переклад є обов\'язковими'}), 400
         
-        # РЕАЛЬНИЙ ПАРСИНГ HdRezka
-        try:
-            print("Спробуємо парсити HdRezka...")
-            rezka = HdRezkaApi(url)
-            stream = rezka.getStream(season=season, episode=episode, translation=translation)
-            
-            if not stream or not stream.videos:
-                print("HdRezka не повернув відео, використовуємо тестові дані")
-                raise Exception("HdRezka не повернув відео")
-            
-            # Проксіруємо відео через наш сервер
-            import urllib.parse
-            base_url = request.url_root.rstrip('/')
-            if base_url.startswith('http://'):
-                base_url = base_url.replace('http://', 'https://')
-            
-            proxied_videos = {}
-            for quality, video_url in stream.videos.items():
-                # Кодуємо URL
-                encoded_url = urllib.parse.quote(video_url, safe='')
-                proxied_videos[quality] = f'{base_url}/api/video-proxy/{encoded_url}'
-            
-            result = {
-                'videos': proxied_videos,
-                'season': season,
-                'episode': episode,
-                'hdrezka_mode': True
-            }
-            
-            print(f"✅ HdRezka успішно: {list(proxied_videos.keys())}")
-            return jsonify(result)
-            
-        except Exception as parse_error:
-            print(f"❌ HdRezka помилка: {parse_error}")
-            
-            # Fallback до тестових відео якщо HdRezka не працює
-            base_url = request.url_root.rstrip('/')
-            if base_url.startswith('http://'):
-                base_url = base_url.replace('http://', 'https://')
-            
-            result = {
-                'videos': {
-                    '720': f'{base_url}/api/video-proxy/https%3A//commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-                    '1080': f'{base_url}/api/video-proxy/https%3A//commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4'
-                },
-                'season': season,
-                'episode': episode,
-                'test_mode': True,
-                'hdrezka_error': str(parse_error),
-                'message': 'HdRezka не працює - використовуємо тестові відео'
-            }
-            
-            print(f"Повертаємо тестові дані: {result}")
-            return jsonify(result)
+        # ===== ТЕСТОВІ ВІДЕО БЕЗ ПРОКСІ =====
+        print("⚠️ Використовуємо тестові відео (прямі посилання)")
+        
+        # ПРЯМІ посилання - БЕЗ проксі
+        result = {
+            'videos': {
+                '360p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+                '720p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
+                '1080p': 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4'
+            },
+            'season': season,
+            'episode': episode,
+            'test_mode': True,
+            'message': '⚠️ Тестовий режим - прямі посилання на відео'
+        }
+        
+        print(f"✅ Повертаємо {len(result['videos'])} якостей відео")
+        return jsonify(result)
         
     except Exception as e:
         print(f"Помилка при отриманні стріму: {str(e)}")
