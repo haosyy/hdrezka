@@ -40,30 +40,37 @@ HTML_TEMPLATE = """
     <meta property="og:type" content="website">
     
     <!-- Дозволяємо завантаження з Discord -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https://discord.com https://*.discord.com https://*.discordsays.com https://*.railway.app http://*.railway.app; media-src 'self' data: blob: https://*.discordsays.com https://*.railway.app http://*.railway.app https://commondatastorage.googleapis.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://discord.com https://*.discord.com;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https://discord.com https://*.discord.com https://*.discordsays.com https://*.railway.app http://*.railway.app; media-src 'self' data: blob: https://*.discordsays.com https://*.railway.app http://*.railway.app https://commondatastorage.googleapis.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://discord.com https://*.discord.com https://*.discordsays.com;">
     
     <script>
-        // Завантажуємо Discord SDK динамічно
-        function loadDiscordSDK() {
+        // Перевіряємо Discord SDK
+        function checkDiscordSDK() {
             return new Promise((resolve, reject) => {
-                // Перевіряємо, чи вже завантажений
+                // Перевіряємо, чи доступний Discord SDK
                 if (typeof DiscordSDK !== 'undefined') {
-                    console.log('Discord SDK вже завантажений');
+                    console.log('Discord SDK доступний');
                     resolve();
                     return;
                 }
                 
-                const script = document.createElement('script');
-                script.src = 'https://discord.com/api/activities/sdk.js';
-                script.onload = () => {
-                    console.log('Discord SDK завантажено успішно');
-                    resolve();
-                };
-                script.onerror = (error) => {
-                    console.log('Discord SDK не завантажено - працюємо локально');
-                    reject(new Error('Discord SDK не завантажено'));
-                };
-                document.head.appendChild(script);
+                // Перевіряємо, чи ми в Discord Activities
+                if (window.location.hostname.includes('discordsays.com')) {
+                    console.log('В Discord Activities - чекаємо SDK...');
+                    // Чекаємо трохи для завантаження SDK
+                    setTimeout(() => {
+                        if (typeof DiscordSDK !== 'undefined') {
+                            console.log('Discord SDK завантажено після очікування');
+                            resolve();
+                        } else {
+                            console.log('Discord SDK не завантажено в Discord Activities - працюємо без SDK');
+                            // В Discord Activities навіть без SDK
+                            resolve();
+                        }
+                    }, 3000);
+                } else {
+                    console.log('Не в Discord Activities - працюємо локально');
+                    reject(new Error('Не в Discord Activities'));
+                }
             });
         }
     </script>
@@ -257,30 +264,35 @@ HTML_TEMPLATE = """
             const modeText = document.getElementById('modeText');
             
             try {
-                // Спробуємо завантажити Discord SDK
-                await loadDiscordSDK();
+                // Перевіряємо Discord SDK
+                await checkDiscordSDK();
                 
                 // Перевіряємо, чи доступний DiscordSDK
-                if (typeof DiscordSDK === 'undefined') {
-                    throw new Error('Discord SDK не доступний');
+                if (typeof DiscordSDK !== 'undefined') {
+                    discordSDK = new DiscordSDK('1382172131051307038');
+                    
+                    const { code } = await discordSDK.commands.authorize({
+                        client_id: '1382172131051307038',
+                        response_type: 'code',
+                        state: '',
+                        prompt: 'none',
+                        scope: ['identify', 'guilds']
+                    });
+                    
+                    console.log('Discord SDK ініціалізовано успішно');
+                    document.title = 'HdRezka - Discord Activity';
+                    
+                    modeIndicator.style.background = '#e8f5e8';
+                    modeIndicator.style.borderColor = '#4caf50';
+                    modeText.innerHTML = '🎮 Discord Activities режим - працюємо в Discord!';
+                } else {
+                    console.log('Discord SDK недоступний - працюємо в Discord Activities без SDK');
+                    document.title = 'HdRezka - Discord Activity';
+                    
+                    modeIndicator.style.background = '#e8f5e8';
+                    modeIndicator.style.borderColor = '#4caf50';
+                    modeText.innerHTML = '🎮 Discord Activities режим - працюємо в Discord!';
                 }
-                
-                discordSDK = new DiscordSDK('1382172131051307038');
-                
-                const { code } = await discordSDK.commands.authorize({
-                    client_id: '1382172131051307038',
-                    response_type: 'code',
-                    state: '',
-                    prompt: 'none',
-                    scope: ['identify', 'guilds']
-                });
-                
-                console.log('Discord SDK ініціалізовано успішно');
-                document.title = 'HdRezka - Discord Activity';
-                
-                modeIndicator.style.background = '#e8f5e8';
-                modeIndicator.style.borderColor = '#4caf50';
-                modeText.innerHTML = '🎮 Discord Activities режим - працюємо в Discord!';
                 
             } catch (error) {
                 console.log('Discord SDK не доступний (запуск поза Discord):', error?.message || error);
