@@ -164,17 +164,21 @@ HTML_TEMPLATE = """
             <span id="modeText">🔄 Перевірка режиму роботи...</span>
         </div>
         
+        <div id="participants" style="margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 5px; display: none;">
+            <h4>👥 Учасники:</h4>
+        </div>
+        
         <div class="form-group">
             <label for="url">URL сайту:</label>
             <input type="url" id="url" placeholder="https://hdrezka.ag/..." 
                    value="https://hdrezka.me/animation/adventures/31356-arifureta-silneyshiy-remeslennik-v-mire-tv-1-2019.html#t:111-s:1-e:3">
         </div>
 
-        <button onclick="parseContent()" data-action="parse">📥 Парсити контент</button>
-        <button onclick="testAPI()" data-action="test" style="background: #2196F3; margin-left: 10px;">🧪 Тест API</button>
-        <button onclick="testDomains()" data-action="domains" style="background: #FF9800; margin-left: 10px;">🌐 Тест доменів</button>
-        <button onclick="debugInfo()" data-action="debug" style="background: #9C27B0; margin-left: 10px;">🔍 Debug</button>
-        <button onclick="listRoutes()" data-action="routes" style="background: #607D8B; margin-left: 10px;">🛣️ Маршрути</button>
+        <button data-action="parse">📥 Парсити контент</button>
+        <button data-action="test" style="background: #2196F3; margin-left: 10px;">🧪 Тест API</button>
+        <button data-action="domains" style="background: #FF9800; margin-left: 10px;">🌐 Тест доменів</button>
+        <button data-action="debug" style="background: #9C27B0; margin-left: 10px;">🔍 Debug</button>
+        <button data-action="routes" style="background: #607D8B; margin-left: 10px;">🛣️ Маршрути</button>
         <div id="parseResult" class="result" style="display: none;"></div>
     </div>
 
@@ -198,8 +202,8 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <button onclick="getStream()" data-action="stream">🎬 Отримати стрім</button>
-        <button onclick="testStream()" data-action="stream-test" style="background: #E91E63; margin-left: 10px;">🧪 Тест стріму</button>
+        <button data-action="stream">🎬 Отримати стрім</button>
+        <button data-action="stream-test" style="background: #E91E63; margin-left: 10px;">🧪 Тест стріму</button>
         <div id="streamResult" class="result" style="display: none;"></div>
         
         <div id="videoContainer" style="display: none; margin-top: 20px;">
@@ -208,7 +212,10 @@ HTML_TEMPLATE = """
                 <label for="qualitySelect">Якість відео:</label>
                 <select id="qualitySelect" onchange="changeVideoQuality()"></select>
             </div>
-            <video id="videoPlayer" controls style="width: 100%; max-width: 800px; height: auto;">
+            <video id="videoPlayer" controls style="width: 100%; max-width: 800px; height: auto;" 
+                   onplay="broadcastCommand('PLAY_VIDEO', { time: this.currentTime })"
+                   onpause="broadcastCommand('PAUSE_VIDEO', { time: this.currentTime })"
+                   onseeked="broadcastCommand('SEEK_VIDEO', { time: this.currentTime })">
                 Ваш браузер не підтримує відео
             </video>
             <div id="videoInfo" style="margin-top: 10px; font-size: 14px; color: #666;"></div>
@@ -250,12 +257,102 @@ HTML_TEMPLATE = """
                 modeIndicator.style.borderColor = '#4caf50';
                 modeText.innerHTML = '🎮 Discord Activities режим - працюємо в Discord!';
                 
+                // Налаштовуємо спільний перегляд
+                setupSharedViewing();
+                
             } catch (error) {
                 console.log('Discord SDK не доступний (запуск поза Discord):', error.message);
                 
                 modeIndicator.style.background = '#fff3e0';
                 modeIndicator.style.borderColor = '#ff9800';
                 modeText.innerHTML = '🌐 Локальний режим - працюємо як звичайний сайт';
+            }
+        }
+        
+        // Налаштування спільного перегляду
+        function setupSharedViewing() {
+            if (!discordSDK) return;
+            
+            // Слухаємо зміни в активності
+            discordSDK.subscribe('ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE', (participants) => {
+                console.log('Учасники активності:', participants);
+                updateParticipantsList(participants);
+            });
+            
+            // Слухаємо команди від інших учасників
+            discordSDK.subscribe('ACTIVITY_INSTANCE_COMMAND', (command) => {
+                console.log('Отримано команду:', command);
+                handleSharedCommand(command);
+            });
+        }
+        
+        // Оновлення списку учасників
+        function updateParticipantsList(participants) {
+            const participantsDiv = document.getElementById('participants');
+            if (!participantsDiv) return;
+            
+            participantsDiv.innerHTML = '<h4>👥 Учасники:</h4>';
+            participants.forEach(participant => {
+                const div = document.createElement('div');
+                div.textContent = participant.username || participant.id;
+                div.style.margin = '5px 0';
+                participantsDiv.appendChild(div);
+            });
+        }
+        
+        // Обробка спільних команд
+        function handleSharedCommand(command) {
+            switch (command.type) {
+                case 'PLAY_VIDEO':
+                    if (command.data && command.data.videoUrl) {
+                        playVideo(command.data.videoUrl);
+                    }
+                    break;
+                case 'PAUSE_VIDEO':
+                    pauseVideo();
+                    break;
+                case 'SEEK_VIDEO':
+                    if (command.data && command.data.time) {
+                        seekVideo(command.data.time);
+                    }
+                    break;
+            }
+        }
+        
+        // Відправка команди всім учасникам
+        async function broadcastCommand(type, data = {}) {
+            if (!discordSDK) return;
+            
+            try {
+                await discordSDK.commands.broadcast({
+                    type: type,
+                    data: data
+                });
+            } catch (error) {
+                console.error('Помилка відправки команди:', error);
+            }
+        }
+        
+        // Функції для спільного перегляду
+        function playVideo(videoUrl) {
+            const video = document.getElementById('videoPlayer');
+            if (video && videoUrl) {
+                video.src = videoUrl;
+                video.play();
+            }
+        }
+        
+        function pauseVideo() {
+            const video = document.getElementById('videoPlayer');
+            if (video) {
+                video.pause();
+            }
+        }
+        
+        function seekVideo(time) {
+            const video = document.getElementById('videoPlayer');
+            if (video) {
+                video.currentTime = time;
             }
         }
         
@@ -594,6 +691,12 @@ HTML_TEMPLATE = """
                 videoPlayer.currentTime = currentTime;
                 videoPlayer.play();
                 updateVideoInfo(selectedQuality, currentStreamData.videos[selectedQuality]);
+                
+                // Відправляємо команду всім учасникам
+                broadcastCommand('PLAY_VIDEO', { 
+                    videoUrl: currentStreamData.videos[selectedQuality],
+                    time: currentTime
+                });
             }
         }
 
